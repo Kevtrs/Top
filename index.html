@@ -305,6 +305,22 @@ function listenProfileIndex(cb) {
 }
 
 // ─── RECOMMANDATIONS ENTRE PROFILS ─────────────────────────────────
+async function sendPushViaWorker(fcmToken, fromName, movieTitle) {
+  try {
+    await fetch("https://letop-push.kevintorres91610.workers.dev", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        token: fcmToken,
+        title: `${fromName} te recommande un film 🎬`,
+        message: movieTitle,
+        data: { type: "reco", url: "https://kevtrs.github.io/Top/" }
+      })
+    });
+  } catch(e) {
+    console.warn("Push failed", e);
+  }
+}
 async function sendRecoToUser(toUserId, movie) {
   const recoId = `${toUserId}_${movie.id}_${Date.now()}`;
   await setDoc(doc(db, "sentRecos", recoId), {
@@ -314,6 +330,18 @@ async function sendRecoToUser(toUserId, movie) {
     seen: false,
     createdAt: Date.now()
   });
+
+  const fromProfile = profileById(currentUser);
+  const fromName = fromProfile?.name || "Quelqu'un";
+  try {
+    const tokenSnap = await getDocs(collection(db, "pushTokens", toUserId, "tokens"));
+    tokenSnap.forEach(d => {
+      const token = d.data().token;
+      if (token) sendPushViaWorker(token, fromName, movie.title);
+    });
+  } catch(e) {
+    console.warn("Tokens fetch failed", e);
+  }
 }
 function listenIncomingRecos(cb) {
   return onSnapshot(collection(db, "sentRecos"), snap => {
