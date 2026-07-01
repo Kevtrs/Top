@@ -71,6 +71,8 @@ let onboardingNewUser = null;
 let incomingRecos = [];
 let PROFILES = []; // chargé dynamiquement depuis Firestore
 let PROFILE_INDEX = [];
+let DATA_PROFILES = [];
+const PROFILE_DOC_SOURCES = { rankings: [], watched: [], watchlist: [] };
 let creatingProfile = false; // état "créer un nouveau profil" sur l'écran de sélection
 let deferredInstallPrompt = null;
 let recommendationRequestSeq = 0;
@@ -112,41 +114,71 @@ document.addEventListener("visibilitychange", () => {
 async function saveRankingToCloud(userId, rankedArray) {
   if (!userId) return;
   if (userId === currentUser) await ensureProfileInCloud(userId);
+  const profile = profilePayload(userId);
   allRankings = { ...allRankings, [userId]: rankedArray };
-  await setDoc(doc(db, "rankings", userId), { movies: rankedArray, updatedAt: Date.now() });
+  await setDoc(doc(db, "rankings", userId), { movies: rankedArray, updatedAt: Date.now(), ...profileMetaPayload(profile) }, { merge: true });
 }
 async function saveWatchedToCloud(userId, watchedArray) {
   if (!userId) return;
   if (userId === currentUser) await ensureProfileInCloud(userId);
+  const profile = profilePayload(userId);
   allWatched = { ...allWatched, [userId]: watchedArray };
-  await setDoc(doc(db, "watched", userId), { movies: watchedArray, updatedAt: Date.now() });
+  await setDoc(doc(db, "watched", userId), { movies: watchedArray, updatedAt: Date.now(), ...profileMetaPayload(profile) }, { merge: true });
 }
 async function saveWatchlistToCloud(userId, watchlistArray) {
   if (!userId) return;
   if (userId === currentUser) await ensureProfileInCloud(userId);
+  const profile = profilePayload(userId);
   allWatchlist = { ...allWatchlist, [userId]: watchlistArray };
-  await setDoc(doc(db, "watchlist", userId), { movies: watchlistArray, updatedAt: Date.now() });
+  await setDoc(doc(db, "watchlist", userId), { movies: watchlistArray, updatedAt: Date.now(), ...profileMetaPayload(profile) }, { merge: true });
 }
 function listenAllRankings(cb) {
   return onSnapshot(collection(db, "rankings"), snap => {
     const data = {};
-    snap.forEach(d => { data[d.id] = d.data().movies || []; });
+    const profiles = [];
+    snap.forEach(d => {
+      const raw = d.data();
+      data[d.id] = raw.movies || [];
+      profiles.push(profileFromDataDoc(raw, d.id));
+    });
+    updateProfileDocSource("rankings", profiles);
     cb(data);
-  }, () => cb({}));
+  }, () => {
+    updateProfileDocSource("rankings", []);
+    cb({});
+  });
 }
 function listenAllWatched(cb) {
   return onSnapshot(collection(db, "watched"), snap => {
     const data = {};
-    snap.forEach(d => { data[d.id] = d.data().movies || []; });
+    const profiles = [];
+    snap.forEach(d => {
+      const raw = d.data();
+      data[d.id] = raw.movies || [];
+      profiles.push(profileFromDataDoc(raw, d.id));
+    });
+    updateProfileDocSource("watched", profiles);
     cb(data);
-  }, () => cb({}));
+  }, () => {
+    updateProfileDocSource("watched", []);
+    cb({});
+  });
 }
 function listenAllWatchlist(cb) {
   return onSnapshot(collection(db, "watchlist"), snap => {
     const data = {};
-    snap.forEach(d => { data[d.id] = d.data().movies || []; });
+    const profiles = [];
+    snap.forEach(d => {
+      const raw = d.data();
+      data[d.id] = raw.movies || [];
+      profiles.push(profileFromDataDoc(raw, d.id));
+    });
+    updateProfileDocSource("watchlist", profiles);
     cb(data);
-  }, () => cb({}));
+  }, () => {
+    updateProfileDocSource("watchlist", []);
+    cb({});
+  });
 }
 function myRanked() { return allRankings[currentUser] || []; }
 function viewedRanked() { return allRankings[viewingUser] || []; }
@@ -179,14 +211,56 @@ function profilePayload(userId, preferredName = "") {
     updatedAt: Date.now()
   };
 }
+function profileMetaPayload(profile) {
+  return {
+    profile,
+    profileId: profile.id,
+    profileName: profile.name,
+    profileUpdatedAt: Date.now()
+  };
+}
+function profileFromDataDoc(raw, fallbackId) {
+  return normalizeProfileData(raw?.profile || {
+    id: raw?.profileId,
+    name: raw?.profileName,
+    initial: raw?.profileInitial,
+    color: raw?.profileColor,
+    createdAt: raw?.profileCreatedAt
+  }, fallbackId);
+}
+function updateProfileDocSource(source, profiles) {
+  PROFILE_DOC_SOURCES[source] = profiles.map(p => normalizeProfileData(p, p.id)).filter(p => p.id);
+  const map = new Map();
+  Object.values(PROFILE_DOC_SOURCES).flat().forEach(profile => {
+    const normalized = normalizeProfileData(profile, profile.id);
+    if (!normalized.id) return;
+    map.set(normalized.id, { ...(map.get(normalized.id) || {}), ...normalized });
+  });
+  DATA_PROFILES = [...map.values()];
+}
+function forgetLocalProfile(userId) {
+  PROFILES = PROFILES.filter(p => p.id !== userId);
+  PROFILE_INDEX = PROFILE_INDEX.filter(p => p.id !== userId);
+  DATA_PROFILES = DATA_PROFILES.filter(p => p.id !== userId);
+  Object.keys(PROFILE_DOC_SOURCES).forEach(source => {
+    PROFILE_DOC_SOURCES[source] = PROFILE_DOC_SOURCES[source].filter(p => p.id !== userId);
+  });
+  publishedProfileIds.delete(userId);
+}
 async function createProfile(id, name) {
   const payload = profilePayload(id, name);
-  await Promise.all([
+  const meta = profileMetaPayload(payload);
+  const writes = await Promise.allSettled([
     setDoc(doc(db, "profiles", id), payload, { merge: true }),
-    setDoc(doc(db, "profileIndex", id), payload, { merge: true })
+    setDoc(doc(db, "profileIndex", id), payload, { merge: true }),
+    setDoc(doc(db, "rankings", id), meta, { merge: true }),
+    setDoc(doc(db, "watched", id), meta, { merge: true }),
+    setDoc(doc(db, "watchlist", id), meta, { merge: true })
   ]);
+  if (!writes.some(result => result.status === "fulfilled")) throw new Error("profile-write-failed");
   PROFILES = [...PROFILES.filter(p => p.id !== id), payload];
   PROFILE_INDEX = [...PROFILE_INDEX.filter(p => p.id !== id), payload];
+  updateProfileDocSource("rankings", [...PROFILE_DOC_SOURCES.rankings.filter(p => p.id !== id), payload]);
   publishedProfileIds.add(id);
 }
 async function ensureProfileInCloud(userId, preferredName = "") {
@@ -194,21 +268,21 @@ async function ensureProfileInCloud(userId, preferredName = "") {
   repairingProfileIds.add(userId);
   const payload = profilePayload(userId, preferredName);
   try {
-    await Promise.all([
+    const meta = profileMetaPayload(payload);
+    const writes = await Promise.allSettled([
       setDoc(doc(db, "profiles", userId), payload, { merge: true }),
-      setDoc(doc(db, "profileIndex", userId), payload, { merge: true })
+      setDoc(doc(db, "profileIndex", userId), payload, { merge: true }),
+      setDoc(doc(db, "rankings", userId), meta, { merge: true }),
+      setDoc(doc(db, "watched", userId), meta, { merge: true }),
+      setDoc(doc(db, "watchlist", userId), meta, { merge: true })
     ]);
+    if (!writes.some(result => result.status === "fulfilled")) throw new Error("profile-write-failed");
     PROFILES = [...PROFILES.filter(p => p.id !== userId), payload];
     PROFILE_INDEX = [...PROFILE_INDEX.filter(p => p.id !== userId), payload];
+    updateProfileDocSource("rankings", [...PROFILE_DOC_SOURCES.rankings.filter(p => p.id !== userId), payload]);
     publishedProfileIds.add(userId);
   } catch (e) {
-    try {
-      await setDoc(doc(db, "profiles", userId), payload, { merge: true });
-      PROFILES = [...PROFILES.filter(p => p.id !== userId), payload];
-      publishedProfileIds.add(userId);
-    } catch (err) {
-      showToast("Profil pas encore synchronisé");
-    }
+    showToast("Profil pas encore synchronisé");
   } finally {
     repairingProfileIds.delete(userId);
   }
@@ -294,7 +368,7 @@ function getAllMovieIdsForUser(userId) {
   return new Set((allRankings[userId] || []).map(m => m.id));
 }
 function profileById(profileId) {
-  return PROFILES.find(pr => pr.id === profileId) || PROFILE_INDEX.find(pr => pr.id === profileId) || null;
+  return PROFILES.find(pr => pr.id === profileId) || PROFILE_INDEX.find(pr => pr.id === profileId) || DATA_PROFILES.find(pr => pr.id === profileId) || null;
 }
 function fallbackProfile(profileId) {
   const label = String(profileId || "profil");
@@ -306,14 +380,14 @@ function fallbackProfile(profileId) {
   };
 }
 function normalizeProfileData(profile, fallbackId) {
-  const id = profile?.id || fallbackId;
-  const name = profile?.name || id || "Profil";
+  const id = profile?.id || profile?.profileId || fallbackId;
+  const name = profile?.name || profile?.profileName || (id ? profileNameFromId(id) : "Profil");
   return {
     id,
     name,
-    initial: profile?.initial || name.trim()[0]?.toUpperCase() || "?",
-    color: profile?.color || "var(--lav)",
-    createdAt: profile?.createdAt || 0
+    initial: profile?.initial || profile?.profileInitial || name.trim()[0]?.toUpperCase() || "?",
+    color: profile?.color || profile?.profileColor || "var(--lav)",
+    createdAt: profile?.createdAt || profile?.profileCreatedAt || 0
   };
 }
 function hasProfile(profileId) {
@@ -327,6 +401,7 @@ function allKnownProfiles() {
     map.set(normalized.id, { ...(map.get(normalized.id) || {}), ...normalized });
   };
 
+  DATA_PROFILES.forEach(p => addProfile(p, p.id));
   PROFILE_INDEX.forEach(p => addProfile(p, p.id));
   PROFILES.forEach(p => addProfile(p, p.id));
   Object.keys(allRankings).forEach(id => addProfile(profileById(id), id));
@@ -891,9 +966,17 @@ function renderWatchlistTabContent() {
 function renderFriendsTabContent(viewed) {
   const friends = friendProfiles();
   if (!friends.length) {
+    const knownCount = allKnownProfiles().length;
+    const topCount = Object.keys(allRankings).length;
+    const watchedCount = Object.keys(allWatched).length;
+    const watchlistCount = Object.keys(allWatchlist).length;
     return `
       <div class="section-label">Amis</div>
-      <div class="empty-state">Aucun autre compte synchronisé pour l'instant. Ouvre Le Top sur l'autre appareil avec la dernière version pour qu'il publie son profil.</div>`;
+      <div class="empty-state">
+        <div>Aucun autre compte synchronisé pour l'instant. Ouvre Le Top sur l'autre appareil avec la dernière version pour qu'il publie son profil.</div>
+        <small>Synchro : ${knownCount} profil${knownCount > 1 ? "s" : ""} repéré${knownCount > 1 ? "s" : ""}, ${topCount} Top, ${watchedCount} Vus, ${watchlistCount} À voir.</small>
+        <button class="btn-secondary" id="btn-force-profile-sync" type="button">Synchroniser mon profil</button>
+      </div>`;
   }
   return `
     <div class="section-label">Famille</div>
@@ -1092,6 +1175,14 @@ function attachAppEvents() {
       renderRanked();
       showToast("Classement réinitialisé");
     }
+  });
+
+  document.getElementById("btn-force-profile-sync")?.addEventListener("click", async () => {
+    if (!currentUser) return;
+    publishedProfileIds.delete(currentUser);
+    await ensureProfileInCloud(currentUser);
+    showToast("Profil synchronisé");
+    renderPage();
   });
 
   document.querySelectorAll(".profile-chip, .friend-card").forEach(el => {
@@ -1966,9 +2057,7 @@ async function deleteCurrentAccount() {
     return;
   }
 
-  PROFILES = PROFILES.filter(p => p.id !== userId);
-  PROFILE_INDEX = PROFILE_INDEX.filter(p => p.id !== userId);
-  publishedProfileIds.delete(userId);
+  forgetLocalProfile(userId);
   delete allRankings[userId];
   delete allWatched[userId];
   delete allWatchlist[userId];
@@ -2928,6 +3017,13 @@ body.no-page-scroll #root {
   background: var(--card); border-radius: 20px;
   box-shadow: inset 3px 3px 8px var(--shadow-d), inset -3px -3px 8px var(--shadow-l);
   margin: 0 20px;
+}
+.empty-state small {
+  display: block; margin-top: 12px; font-size: 11px; color: var(--ink-soft);
+}
+.empty-state .btn-secondary {
+  max-width: 280px; margin: 16px auto 0; border-radius: 16px; color: var(--lav-deep);
+  background: var(--bg); box-shadow: 3px 3px 8px var(--shadow-d), -3px -3px 8px var(--shadow-l);
 }
 
 .accordion-section { margin: 18px 20px 0; }
