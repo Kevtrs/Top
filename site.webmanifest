@@ -1,7 +1,7 @@
 {
   "name": "Le Top",
   "short_name": "Le Top",
-  "start_url": ".",
+  "start_url": "./?v=20260701-firestore-reconnect",
   "scope": ".",
   "display": "standalone",
   "background_color": "#F6F4FC",

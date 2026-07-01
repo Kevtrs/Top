@@ -11,12 +11,12 @@
 <title>Le Top 🍿</title>
 <link rel="apple-touch-icon" href="./apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="64x64" href="./favicon.png">
-<link rel="manifest" href="./site.webmanifest">
+<link rel="manifest" href="./site.webmanifest?v=20260701-firestore-reconnect">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, doc, setDoc, deleteDoc, getDocs, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, doc, setDoc, deleteDoc, getDocs, onSnapshot, collection, enableNetwork, disableNetwork } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getMessaging, getToken, isSupported as isMessagingSupported, onMessage } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js";
 
 // ─── CONFIG ───────────────────────────────────────────────────────
@@ -38,6 +38,7 @@ const PROFILE_COLORS = [
 const TMDB_IMG = "https://image.tmdb.org/t/p/w342";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
+const PWA_VERSION = "20260701-firestore-reconnect";
 
 const APP_TABS = [
   { id: "search", label: "Recherche", icon: "search", color: "var(--lav)" },
@@ -104,8 +105,14 @@ window.addEventListener("appinstalled", () => {
   renderPage();
 });
 
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && document.getElementById("root")) {
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState === "hidden") {
+    try { await disableNetwork(db); } catch(e) {}
+    return;
+  }
+
+  try { await enableNetwork(db); } catch(e) {}
+  if (document.getElementById("root")) {
     applyPlatformMode();
     renderPage();
   }
@@ -2142,7 +2149,7 @@ function setupPwaInstallMetadata() {
   const links = [
     { rel: "apple-touch-icon", href: "./apple-touch-icon.png" },
     { rel: "icon", href: "./favicon.png", type: "image/png", sizes: "64x64" },
-    { rel: "manifest", href: "./site.webmanifest" }
+    { rel: "manifest", href: `./site.webmanifest?v=${PWA_VERSION}` }
   ];
   links.forEach(linkData => {
     let link = document.querySelector(`link[rel="${linkData.rel}"]`);
@@ -2172,7 +2179,7 @@ async function setupForegroundPushListener() {
 }
 async function getPushRegistrationToken() {
   if (!(await isMessagingSupported())) throw new Error("unsupported");
-  const registration = await navigator.serviceWorker.register("./firebase-messaging-sw.js");
+  const registration = await navigator.serviceWorker.register(`./firebase-messaging-sw.js?v=${PWA_VERSION}`);
   const messaging = getMessaging(app);
   return await getToken(messaging, {
     vapidKey: FCM_VAPID_KEY,
