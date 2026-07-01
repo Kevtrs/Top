@@ -1897,6 +1897,23 @@ async function deleteCurrentAccount() {
     showToast("Suppression annulée");
     return;
   }
+
+  PROFILES = PROFILES.filter(p => p.id !== userId);
+  delete allRankings[userId];
+  delete allWatched[userId];
+  delete allWatchlist[userId];
+  incomingRecos = incomingRecos.filter(r => r.to !== userId && r.from !== userId);
+  currentUser = null;
+  viewingUser = null;
+  onboardingNewUser = null;
+  creatingProfile = false;
+  activeTab = "search";
+  localStorage.removeItem("letop_user");
+  localStorage.removeItem(PUSH_BOUND_KEY);
+  closeSettingsSheet();
+  showToast("Compte supprimé");
+  renderPage();
+
   try {
     await Promise.all([
       deleteDoc(doc(db, "profiles", userId)),
@@ -1907,22 +1924,8 @@ async function deleteCurrentAccount() {
       deleteDoc(doc(db, "pushTokens", userId)),
       deleteUserRecos(userId)
     ]);
-    PROFILES = PROFILES.filter(p => p.id !== userId);
-    delete allRankings[userId];
-    delete allWatched[userId];
-    delete allWatchlist[userId];
-    incomingRecos = incomingRecos.filter(r => r.to !== userId && r.from !== userId);
-    currentUser = null;
-    viewingUser = null;
-    onboardingNewUser = null;
-    creatingProfile = false;
-    activeTab = "search";
-    localStorage.removeItem("letop_user");
-    closeSettingsSheet();
-    showToast("Compte supprimé");
-    renderPage();
   } catch (e) {
-    showToast("Erreur de suppression");
+    showToast("Suppression en ligne incomplète");
   }
 }
 
