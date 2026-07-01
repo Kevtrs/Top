@@ -78,6 +78,7 @@ let rankingsSynced = false;
 let profilesServerConfirmed = false;
 let foregroundPushListening = false;
 let installGateSheetShown = false;
+let scrollLockFrame = null;
 
 const PENDING_PUSH_TOKEN_KEY = "letop_pending_push_token";
 const PUSH_BOUND_KEY = "letop_push_bound";
@@ -306,6 +307,33 @@ function pushBellIcon() {
 }
 function renderBootLoading() {
   document.getElementById("root").innerHTML = `<div class="boot-loading">${appLogoHtml("boot-logo")}<span class="loading-spin"></span></div>`;
+  scheduleScrollLockUpdate();
+}
+function scheduleScrollLockUpdate() {
+  if (scrollLockFrame) cancelAnimationFrame(scrollLockFrame);
+  scrollLockFrame = requestAnimationFrame(updatePageScrollLock);
+}
+function updatePageScrollLock() {
+  scrollLockFrame = null;
+  const root = document.getElementById("root");
+  if (!root) return;
+  const tabbar = document.querySelector(".app-tabbar-wrap");
+  const tabbarHeight = tabbar ? tabbar.getBoundingClientRect().height : 0;
+  const reservedBottom = tabbar ? Math.min(tabbarHeight, window.innerHeight * 0.28) : 0;
+  const availableHeight = Math.max(0, window.innerHeight - reservedBottom);
+  const contentHeight = Math.ceil(root.scrollHeight);
+  const pageNeedsScroll = contentHeight > availableHeight + 6;
+  const overlayOpen = !!document.querySelector(".context-overlay.show");
+  const shouldLock = overlayOpen || !pageNeedsScroll;
+
+  document.documentElement.classList.toggle("no-page-scroll", shouldLock);
+  document.body.classList.toggle("no-page-scroll", shouldLock);
+  if (!pageNeedsScroll && window.scrollY !== 0) window.scrollTo(0, 0);
+}
+function canTouchScrollInside(target) {
+  const scrollable = target?.closest?.(".context-sheet, .reco-scroll, .profile-switcher-tab");
+  if (!scrollable) return false;
+  return scrollable.scrollHeight > scrollable.clientHeight || scrollable.scrollWidth > scrollable.clientWidth;
 }
 function renderGateSteps(steps) {
   return steps.map((step, i) => `<div class="gate-step"><span>${i + 1}</span>${escapeHtml(step)}</div>`).join("");
@@ -2258,6 +2286,22 @@ document.addEventListener("DOMContentLoaded", () => {
   setupPwaInstallMetadata();
   setupForegroundPushListener();
   renderInstallSheetContent();
+
+  const scrollLockObserver = new MutationObserver(scheduleScrollLockUpdate);
+  scrollLockObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["class", "style"]
+  });
+  window.addEventListener("resize", scheduleScrollLockUpdate);
+  window.addEventListener("orientationchange", scheduleScrollLockUpdate);
+  document.addEventListener("touchmove", (e) => {
+    if (!document.body.classList.contains("no-page-scroll")) return;
+    if (touchDragState || canTouchScrollInside(e.target)) return;
+    e.preventDefault();
+  }, { passive: false });
+
   renderPage();
 
   setTimeout(() => {
@@ -2401,6 +2445,17 @@ body {
   min-height: 100vh;
   overscroll-behavior-y: contain;
   padding-bottom: 120px;
+}
+html.no-page-scroll,
+body.no-page-scroll {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+body.no-page-scroll {
+  height: 100dvh;
+}
+body.no-page-scroll #root {
+  min-height: 100dvh;
 }
 
 .profile-screen {
@@ -2821,7 +2876,7 @@ body {
 }
 .context-overlay.show { display: flex; }
 @keyframes fade-in { from{opacity:0} to{opacity:1} }
-.context-sheet { background: rgba(255,255,255,0.92); backdrop-filter: blur(20px); width: 100%; max-width: 480px; border-radius: 24px 24px 0 0; padding: 10px 14px calc(env(safe-area-inset-bottom, 16px) + 14px); animation: sheet-up 0.25s cubic-bezier(.2,.8,.2,1); }
+.context-sheet { background: rgba(255,255,255,0.92); backdrop-filter: blur(20px); width: 100%; max-width: 480px; max-height: min(88vh, 760px); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; border-radius: 24px 24px 0 0; padding: 10px 14px calc(env(safe-area-inset-bottom, 16px) + 14px); animation: sheet-up 0.25s cubic-bezier(.2,.8,.2,1); }
 @keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
 .context-handle { width: 36px; height: 4px; background: var(--ink-faint); border-radius: 4px; margin: 6px auto 14px; }
 .context-preview { display: flex; align-items: center; gap: 12px; padding: 6px 10px 16px; }
