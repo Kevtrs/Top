@@ -162,7 +162,7 @@ async function createProfile(id, name) {
 function listenProfiles(cb) {
   return onSnapshot(collection(db, "profiles"), { includeMetadataChanges: true }, snap => {
     const list = [];
-    snap.forEach(d => list.push(d.data()));
+    snap.forEach(d => list.push(normalizeProfileData(d.data(), d.id)));
     list.sort((a,b) => (a.createdAt||0) - (b.createdAt||0));
     cb(list, snap.metadata);
   }, () => cb([], { fromCache: false, hasPendingWrites: false, failed: true }));
@@ -243,8 +243,41 @@ function fallbackProfile(profileId) {
     color: "var(--lav)"
   };
 }
+function normalizeProfileData(profile, fallbackId) {
+  const id = profile?.id || fallbackId;
+  const name = profile?.name || id || "Profil";
+  return {
+    id,
+    name,
+    initial: profile?.initial || name.trim()[0]?.toUpperCase() || "?",
+    color: profile?.color || "var(--lav)",
+    createdAt: profile?.createdAt || 0
+  };
+}
 function hasProfile(profileId) {
   return !!profileById(profileId);
+}
+function allKnownProfiles() {
+  const map = new Map();
+  const addProfile = (profile, fallbackId) => {
+    const normalized = normalizeProfileData(profile, fallbackId);
+    if (!normalized.id) return;
+    map.set(normalized.id, { ...(map.get(normalized.id) || {}), ...normalized });
+  };
+
+  PROFILES.forEach(p => addProfile(p, p.id));
+  Object.keys(allRankings).forEach(id => addProfile(profileById(id), id));
+  Object.keys(allWatched).forEach(id => addProfile(profileById(id), id));
+  Object.keys(allWatchlist).forEach(id => addProfile(profileById(id), id));
+  incomingRecos.forEach(r => {
+    addProfile(profileById(r.from), r.from);
+    addProfile(profileById(r.to), r.to);
+  });
+
+  return [...map.values()].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || a.name.localeCompare(b.name));
+}
+function friendProfiles() {
+  return allKnownProfiles().filter(p => p.id && p.id !== currentUser);
 }
 function isPushConfigured() {
   return FCM_VAPID_KEY.trim().length > 20;
@@ -790,19 +823,23 @@ function renderWatchlistTabContent() {
 }
 
 function renderFriendsTabContent(viewed) {
-  const friends = PROFILES.filter(p => p.id !== currentUser);
+  const friends = friendProfiles();
   if (!friends.length) {
     return `
       <div class="section-label">Amis</div>
       <div class="empty-state">Les prochains comptes créés apparaîtront ici automatiquement.</div>`;
   }
   return `
-    <div class="profile-switcher profile-switcher-tab">
+    <div class="section-label">Famille</div>
+    <div class="friend-grid">
       ${friends.map(p => `
-        <div class="profile-chip ${p.id === viewingUser ? "active" : ""}" data-id="${escapeAttr(p.id)}" style="--pc:${escapeAttr(p.color)}">
-          ${profileAvatarHtml(p.id, 22)}
-          <span>${escapeHtml(p.name)}</span>
-        </div>
+        <button class="friend-card ${p.id === viewingUser ? "active" : ""}" data-id="${escapeAttr(p.id)}" style="--pc:${escapeAttr(p.color)}" type="button">
+          ${profileAvatarHtml(p.id, 42)}
+          <span>
+            <strong>${escapeHtml(p.name)}</strong>
+            <small>${(allRankings[p.id] || []).length} film${(allRankings[p.id] || []).length > 1 ? "s" : ""} dans son Top</small>
+          </span>
+        </button>
       `).join("")}
     </div>
     <div class="section-label">Classement de ${escapeHtml(viewed.name)}</div>
@@ -825,6 +862,9 @@ function renderApp() {
     return;
   }
   let viewed = profileById(viewingUser) || (!profilesServerConfirmed && viewingUser ? fallbackProfile(viewingUser) : null);
+  if (!viewed && activeTab === "friends") {
+    viewed = friendProfiles().find(p => p.id === viewingUser) || null;
+  }
   if (!viewed) {
     viewingUser = currentUser;
     viewed = me;
@@ -833,7 +873,7 @@ function renderApp() {
     viewingUser = currentUser;
     viewed = me;
   } else if (viewingUser === currentUser) {
-    const firstFriend = PROFILES.find(p => p.id !== currentUser);
+    const firstFriend = friendProfiles()[0];
     if (firstFriend) {
       viewingUser = firstFriend.id;
       viewed = firstFriend;
@@ -987,7 +1027,7 @@ function attachAppEvents() {
     }
   });
 
-  document.querySelectorAll(".profile-chip").forEach(el => {
+  document.querySelectorAll(".profile-chip, .friend-card").forEach(el => {
     el.addEventListener("click", () => {
       viewingUser = el.dataset.id;
       renderPage();
@@ -1731,7 +1771,7 @@ function moveMovie(fromIdx, toIdx, insertAfter) {
 }
 
 function openRecommendSheet(movie) {
-  const others = PROFILES.filter(p => p.id !== currentUser);
+  const others = friendProfiles();
   const poster = movie.poster_path ? TMDB_IMG + movie.poster_path : "";
   document.getElementById("recommend-preview").innerHTML = `
     ${poster ? `<img src="${poster}" alt="">` : ""}
@@ -2678,6 +2718,23 @@ body.no-page-scroll #root {
   color: white; display: flex; align-items: center; justify-content: center;
   font-size: 10px; font-weight: 800;
 }
+.friend-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px; padding: 0 20px 2px;
+}
+.friend-card {
+  border: none; background: var(--card); border-radius: 20px; min-height: 76px; padding: 12px;
+  display: flex; align-items: center; gap: 11px; text-align: left; color: var(--ink);
+  font-family: 'Plus Jakarta Sans', sans-serif; box-shadow: 5px 5px 14px var(--shadow-d), -5px -5px 14px var(--shadow-l);
+  transition: transform 0.14s cubic-bezier(.2,.8,.2,1), box-shadow 0.14s cubic-bezier(.2,.8,.2,1);
+}
+.friend-card:active { transform: scale(0.97); }
+.friend-card.active {
+  box-shadow: inset 4px 4px 10px var(--shadow-d), inset -4px -4px 10px var(--shadow-l);
+}
+.friend-card span:not(.avatar-initial-sm) { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.friend-card strong { font-size: 14px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.friend-card small { font-size: 11px; color: var(--ink-soft); font-weight: 700; line-height: 1.25; }
 
 .search-wrap { padding: 16px 0 4px; }
 .search-box {
