@@ -314,7 +314,7 @@ function listenProfileIndex(cb) {
 // ─── RECOMMANDATIONS ENTRE PROFILS ─────────────────────────────────
 async function sendPushViaWorker(fcmToken, fromName, movieTitle) {
   try {
-    await fetch("https://letop-push.kevintorres91610.workers.dev", {
+    const response = await fetch("https://letop-push.kevintorres91610.workers.dev", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -324,8 +324,11 @@ async function sendPushViaWorker(fcmToken, fromName, movieTitle) {
         data: { type: "reco", url: "https://kevtrs.github.io/Top/" }
       })
     });
+    if (!response.ok) throw new Error(`Push worker ${response.status}`);
+    return true;
   } catch(e) {
     console.warn("Push failed", e);
+    return false;
   }
 }
 async function sendRecoToUser(toUserId, movie) {
@@ -342,12 +345,16 @@ async function sendRecoToUser(toUserId, movie) {
   const fromName = fromProfile?.name || "Quelqu'un";
   try {
     const tokenSnap = await getDocs(collection(db, "pushTokens", toUserId, "tokens"));
-    tokenSnap.forEach(d => {
-      const token = d.data().token;
-      if (token) sendPushViaWorker(token, fromName, movie.title);
-    });
+    const tokens = tokenSnap.docs.map(d => d.data().token).filter(Boolean);
+    const results = await Promise.all(tokens.map(token => sendPushViaWorker(token, fromName, movie.title)));
+    return {
+      recoId,
+      tokenCount: tokens.length,
+      sentCount: results.filter(Boolean).length
+    };
   } catch(e) {
     console.warn("Tokens fetch failed", e);
+    return { recoId, tokenCount: 0, sentCount: 0, tokenError: true };
   }
 }
 function listenIncomingRecos(cb) {
@@ -794,6 +801,7 @@ function renderCreateProfileScreen(canCancel = false) {
       localStorage.setItem(USER_NAME_KEY, existingProfile.name);
       const hasMovies = (allRankings[id] || []).length > 0;
       onboardingNewUser = hasMovies ? null : id;
+      await syncPendingPushTokenForCurrentUser();
       showToast(`Bon retour ${existingProfile.name}`);
       if (hasMovies) {
         renderPage();
@@ -807,6 +815,7 @@ function renderCreateProfileScreen(canCancel = false) {
     localStorage.setItem(USER_NAME_KEY, name);
     try {
       await createProfile(id, name);
+      await syncPendingPushTokenForCurrentUser();
       renderOnboarding();
     } catch (e) {
       creatingProfile = true;
@@ -1096,6 +1105,7 @@ function renderApp() {
 
 function renderPage() {
   applyPlatformMode();
+  if (currentUser) syncPendingPushTokenForCurrentUser();
   if (shouldForceInstallGate()) {
     renderInstallGate();
     return;
@@ -1980,9 +1990,16 @@ function openRecommendSheet(movie) {
   document.querySelectorAll(".recommend-target").forEach(item => {
     item.addEventListener("click", async () => {
       try {
-        await sendRecoToUser(item.dataset.id, movie);
+        const result = await sendRecoToUser(item.dataset.id, movie);
         const targetProfile = profileById(item.dataset.id);
-        showToast(`Envoyé à ${targetProfile?.name || "ce profil"} 👋`);
+        const targetName = targetProfile?.name || "ce profil";
+        if (result.tokenCount === 0) {
+          showToast(`Reco envoyée à ${targetName}, mais ses notifs ne sont pas encore liées`);
+        } else if (result.sentCount === 0) {
+          showToast(`Reco envoyée à ${targetName}, notif non reçue`);
+        } else {
+          showToast(`Envoyé à ${targetName} 👋`);
+        }
         closeRecommendSheet();
       } catch (e) {
         showToast("Erreur d'envoi");
@@ -2179,33 +2196,12 @@ async function setupForegroundPushListener() {
 }
 async function getPushRegistrationToken() {
   if (!(await isMessagingSupported())) throw new Error("unsupported");
-
-  // Sur iOS il faut attendre que le SW soit vraiment actif
-  // navigator.serviceWorker.register() seul ne suffit pas
-  let registration;
-  try {
-    registration = await navigator.serviceWorker.register(`./firebase-messaging-sw.js?v=${PWA_VERSION}`);
-    // Attendre que le SW soit actif (critique sur iOS)
-    await navigator.serviceWorker.ready;
-    // Prendre la registration active depuis ready plutôt que celle de register()
-    registration = await navigator.serviceWorker.ready;
-  } catch(swErr) {
-    console.error("[Push] SW registration failed:", swErr);
-    throw new Error("sw-failed");
-  }
-
+  const registration = await navigator.serviceWorker.register(`./firebase-messaging-sw.js?v=${PWA_VERSION}`);
   const messaging = getMessaging(app);
-  try {
-    const token = await getToken(messaging, {
-      vapidKey: FCM_VAPID_KEY,
-      serviceWorkerRegistration: registration
-    });
-    console.log("[Push] Token obtenu:", token ? token.slice(0, 20) + "..." : "null");
-    return token;
-  } catch(tokenErr) {
-    console.error("[Push] getToken failed:", tokenErr?.code, tokenErr?.message);
-    throw tokenErr;
-  }
+  return await getToken(messaging, {
+    vapidKey: FCM_VAPID_KEY,
+    serviceWorkerRegistration: registration
+  });
 }
 async function savePushTokenForProfile(profileId, token) {
   if (!profileId || !token) return;
@@ -2229,9 +2225,11 @@ async function syncPendingPushTokenForCurrentUser() {
       token = await getPushRegistrationToken();
       if (token) localStorage.setItem(PENDING_PUSH_TOKEN_KEY, token);
     }
-  } catch (e) {
-    console.error("[Push] syncPending failed:", e?.code, e?.message);
-  }
+    if (!token) return;
+    const boundKey = `${currentUser}:${tokenDocId(token)}`;
+    if (localStorage.getItem(PUSH_BOUND_KEY) === boundKey) return;
+    await savePushTokenForProfile(currentUser, token);
+  } catch (e) {}
 }
 async function enablePushNotifications(options = {}) {
   const allowWithoutProfile = options.allowWithoutProfile === true;
@@ -2271,7 +2269,6 @@ async function enablePushNotifications(options = {}) {
     renderPage();
     return true;
   } catch (e) {
-    console.error("[Push] enablePush failed:", e?.code, e?.message);
     showToast(e.message === "unsupported" ? "Notifications non compatibles ici" : "Erreur notifications");
     return false;
   }
