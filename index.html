@@ -16,7 +16,7 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, doc, setDoc, deleteDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, doc, setDoc, deleteDoc, getDocs, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getMessaging, getToken, isSupported as isMessagingSupported, onMessage } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js";
 
 // ─── CONFIG ───────────────────────────────────────────────────────
@@ -357,6 +357,40 @@ function tabIconHtml(icon) {
       <path class="tab-popcorn-bucket" d="M20 8c.5 0 .9.4.8 1l-2.6 12c-.1.5-.7 1-1.2 1H7c-.6 0-1.1-.4-1.2-1L3.2 9c-.1-.6.3-1 .8-1Z"></path>
     </svg>`;
   }
+  if (icon === "settings") {
+    return `<svg ${common}>
+      <path d="M9.7 2.8a2 2 0 0 1 4.6 0l.3 1.6a2 2 0 0 0 2.8 1.2l1.4-.8a2 2 0 0 1 2.3 4l-1.2 1a2 2 0 0 0 0 3.2l1.2 1a2 2 0 0 1-2.3 4l-1.4-.8a2 2 0 0 0-2.8 1.2l-.3 1.6a2 2 0 0 1-4.6 0l-.3-1.6a2 2 0 0 0-2.8-1.2l-1.4.8a2 2 0 0 1-2.3-4l1.2-1a2 2 0 0 0 0-3.2l-1.2-1a2 2 0 0 1 2.3-4l1.4.8a2 2 0 0 0 2.8-1.2z"></path>
+      <circle cx="12" cy="12" r="3"></circle>
+    </svg>`;
+  }
+  if (icon === "bell") {
+    return `<svg ${common}>
+      <path d="M10 21h4"></path>
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path>
+    </svg>`;
+  }
+  if (icon === "phone") {
+    return `<svg ${common}>
+      <rect x="7" y="2" width="10" height="20" rx="2"></rect>
+      <path d="M11 18h2"></path>
+    </svg>`;
+  }
+  if (icon === "trash") {
+    return `<svg ${common}>
+      <path d="M3 6h18"></path>
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+      <path d="M19 6 18 20a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+      <path d="M10 11v6"></path>
+      <path d="M14 11v6"></path>
+    </svg>`;
+  }
+  if (icon === "log-out") {
+    return `<svg ${common}>
+      <path d="M10 17 15 12 10 7"></path>
+      <path d="M15 12H3"></path>
+      <path d="M21 3v18"></path>
+    </svg>`;
+  }
   return `<svg ${common}>
     <path class="tab-users-shoulders" d="M18 21a8 8 0 0 0-16 0"></path>
     <circle class="tab-users-main" cx="10" cy="8" r="5"></circle>
@@ -388,69 +422,23 @@ function activeTabLabel() {
 }
 
 function renderProfilePicker() {
-  if (creatingProfile) {
-    renderCreateProfileScreen();
-    return;
-  }
-  document.getElementById("root").innerHTML = `
-  <div class="profile-screen">
-    ${appLogoHtml("profile-logo-img")}
-    <div class="profile-logo">Le Top</div>
-    <div class="profile-sub">C'est qui ?</div>
-    <div class="profile-cards">
-      ${PROFILES.map(p => {
-        const topMovie = (allRankings[p.id] || [])[0];
-        const avatarPoster = topMovie?.poster_path ? TMDB_IMG + topMovie.poster_path : null;
-        return `
-        <div class="profile-card" data-id="${escapeAttr(p.id)}" style="--pc:${escapeAttr(p.color)}">
-          ${avatarPoster
-            ? `<div class="profile-avatar-poster"><img src="${avatarPoster}" alt=""></div>`
-            : `<div class="profile-initial">${escapeHtml(p.initial)}</div>`
-          }
-          <div class="profile-name">${escapeHtml(p.name)}</div>
-        </div>`;
-      }).join("")}
-      <div class="profile-card profile-card-add" id="btn-add-profile">
-        <div class="profile-initial profile-add-icon">+</div>
-        <div class="profile-name">Nouveau</div>
-      </div>
-    </div>
-    <button class="profile-install-btn" id="btn-install-profile">${installButtonLabel()}</button>
-  </div>`;
-  document.querySelectorAll(".profile-card[data-id]").forEach(el => {
-    el.addEventListener("click", () => {
-      const id = el.dataset.id;
-      const hasMovies = (allRankings[id] || []).length > 0;
-      currentUser = id;
-      viewingUser = id;
-      localStorage.setItem("letop_user", id);
-      if (!hasMovies) {
-        onboardingNewUser = id;
-        renderOnboarding();
-      } else {
-        renderPage();
-      }
-    });
-  });
-  document.getElementById("btn-add-profile").addEventListener("click", () => {
-    creatingProfile = true;
-    renderPage();
-  });
-  document.getElementById("btn-install-profile").addEventListener("click", openInstallSheet);
+  renderCreateProfileScreen(false);
 }
 
-function renderCreateProfileScreen() {
+function renderCreateProfileScreen(canCancel = false) {
   document.getElementById("root").innerHTML = `
   <div class="onboard-screen">
-    <div class="onboard-step">NOUVEAU PROFIL</div>
-    <div class="onboard-title">C'est qui ? 🎬</div>
-    <div class="onboard-text">Choisis ton prénom — tu pourras ensuite chercher ton film n°1.</div>
+    ${appLogoHtml("profile-logo-img")}
+    <div class="onboard-step">TON PROFIL</div>
+    <div class="onboard-title">Crée ton espace 🎬</div>
+    <div class="onboard-text">Entre ton prénom. Les autres profils restent cachés, donc personne ne peut changer de compte depuis une liste.</div>
     <div class="search-box" id="newname-box" style="margin-top:18px">
       <span class="search-icon">✏️</span>
       <input type="text" id="newname-input" placeholder="Ton prénom..." maxlength="20">
     </div>
     <button class="btn-primary" id="btn-confirm-name" style="margin-top:16px">Continuer</button>
-    <button class="btn-secondary" id="btn-cancel-create" style="margin-top:10px">Annuler</button>
+    ${canCancel ? `<button class="btn-secondary" id="btn-cancel-create" style="margin-top:10px">Annuler</button>` : ""}
+    <button class="profile-install-btn" id="btn-install-profile">${installButtonLabel()}</button>
   </div>`;
 
   const input = document.getElementById("newname-input");
@@ -464,9 +452,9 @@ function renderCreateProfileScreen() {
     if (submitting) return;
     const name = input.value.trim();
     if (!name) { showToast("Entre un prénom"); return; }
-    const existingIds = PROFILES.map(p => p.id);
     let id = slugify(name);
-    if (existingIds.includes(id)) { showToast("Ce profil existe déjà"); return; }
+    if (!id) id = `profil-${Date.now()}`;
+    const existingProfile = profileById(id);
 
     const btn = document.getElementById("btn-confirm-name");
     btn.innerHTML = `<span class="loading-spin"></span>`; btn.disabled = true;
@@ -477,12 +465,23 @@ function renderCreateProfileScreen() {
     // renderPage() — s'il voit encore creatingProfile=true, il réaffiche
     // l'écran de saisie du nom et écrase ce flux en cours.
     creatingProfile = false;
-    id = slugify(name) || `profil-${Date.now()}`;
-    onboardingNewUser = id;
     currentUser = id;
     viewingUser = id;
     localStorage.setItem("letop_user", id);
 
+    if (existingProfile) {
+      const hasMovies = (allRankings[id] || []).length > 0;
+      onboardingNewUser = hasMovies ? null : id;
+      showToast(`Bon retour ${existingProfile.name}`);
+      if (hasMovies) {
+        renderPage();
+      } else {
+        renderOnboarding();
+      }
+      return;
+    }
+
+    onboardingNewUser = id;
     try {
       await createProfile(id, name);
       renderOnboarding();
@@ -499,10 +498,11 @@ function renderCreateProfileScreen() {
 
   document.getElementById("btn-confirm-name").addEventListener("click", confirm);
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") confirm(); });
-  document.getElementById("btn-cancel-create").addEventListener("click", () => {
+  document.getElementById("btn-cancel-create")?.addEventListener("click", () => {
     creatingProfile = false;
     renderPage();
   });
+  document.getElementById("btn-install-profile").addEventListener("click", openInstallSheet);
 }
 
 // ─── ONBOARDING — choisir son film n°1 (devient l'avatar) ─────────
@@ -720,9 +720,7 @@ function renderApp() {
           <div class="brand-title">${appLogoHtml("brand-logo", "icon")}Le Top</div>
         </div>
         <div class="header-btns">
-          <button class="icon-pill" id="btn-push" title="Activer les notifications">${pushBellIcon()}</button>
-          <button class="icon-pill" id="btn-install" title="${escapeAttr(installButtonTitle())}">📲</button>
-          ${activeTab === "top" ? `<button class="icon-pill" id="btn-reset" title="Tout effacer">🗑️</button>` : ""}
+          <button class="icon-pill" id="btn-settings" title="Réglages">${tabIconHtml("settings")}</button>
         </div>
       </div>
     </div>
@@ -745,6 +743,10 @@ function renderApp() {
 
 function renderPage() {
   if (!profilesSynced && !creatingProfile && !onboardingNewUser) {
+    renderBootLoading();
+    return;
+  }
+  if (!rankingsSynced && !onboardingNewUser) {
     renderBootLoading();
     return;
   }
@@ -818,8 +820,7 @@ function setupTabBarAnimation() {
 }
 
 function attachAppEvents() {
-  document.getElementById("btn-push")?.addEventListener("click", enablePushNotifications);
-  document.getElementById("btn-install")?.addEventListener("click", openInstallSheet);
+  document.getElementById("btn-settings")?.addEventListener("click", openSettingsSheet);
   setupTabBarAnimation();
 
   document.querySelectorAll(".app-tab-item").forEach(btn => {
@@ -1623,6 +1624,147 @@ function closeRecommendSheet() {
   document.getElementById("recommend-overlay").classList.remove("show");
 }
 
+function notificationStatusLabel() {
+  if (!("Notification" in window)) return "Non disponible";
+  if (Notification.permission === "granted") return "Activées";
+  if (Notification.permission === "denied") return "Bloquées";
+  return "À activer";
+}
+
+function renderSettingsSheetContent() {
+  const me = profileById(currentUser) || fallbackProfile(currentUser);
+  const topCount = myRanked().length;
+  const watchedCount = myWatched().length;
+  const watchlistCount = myWatchlist().length;
+  document.getElementById("settings-content").innerHTML = `
+    <div class="settings-profile">
+      ${profileAvatarHtml(currentUser, 48)}
+      <div>
+        <div class="settings-name">${escapeHtml(me.name)}</div>
+        <div class="settings-meta">${topCount} top · ${watchedCount} vus · ${watchlistCount} à voir</div>
+      </div>
+    </div>
+    <div class="settings-group">
+      <button class="context-item settings-item" data-action="notifications" type="button">
+        ${surfaceIconHtml("bell", "settings-icon")}
+        <span><strong>Notifications</strong><small>${notificationStatusLabel()}</small></span>
+      </button>
+      <button class="context-item settings-item" data-action="install" type="button">
+        ${surfaceIconHtml("phone", "settings-icon")}
+        <span><strong>${escapeHtml(installButtonTitle())}</strong><small>Écran d'accueil et mode app</small></span>
+      </button>
+    </div>
+    <div class="settings-group">
+      <button class="context-item settings-item" data-action="reset-top" type="button">
+        ${surfaceIconHtml("crown", "settings-icon")}
+        <span><strong>Vider mon Top</strong><small>Garde ton compte, enlève seulement le classement</small></span>
+      </button>
+      <button class="context-item settings-item" data-action="logout" type="button">
+        ${surfaceIconHtml("log-out", "settings-icon")}
+        <span><strong>Se déconnecter</strong><small>Masque ce profil sur cet appareil</small></span>
+      </button>
+      <button class="context-item settings-item danger" data-action="delete-account" type="button">
+        ${surfaceIconHtml("trash", "settings-icon")}
+        <span><strong>Supprimer mon compte</strong><small>Supprime le profil et ses données</small></span>
+      </button>
+    </div>
+  `;
+
+  document.querySelectorAll(".settings-item").forEach(item => {
+    item.addEventListener("click", () => handleSettingsAction(item.dataset.action));
+  });
+}
+
+function openSettingsSheet() {
+  renderSettingsSheetContent();
+  document.getElementById("settings-overlay").classList.add("show");
+}
+
+function closeSettingsSheet() {
+  document.getElementById("settings-overlay").classList.remove("show");
+}
+
+function logoutCurrentUser() {
+  currentUser = null;
+  viewingUser = null;
+  onboardingNewUser = null;
+  creatingProfile = false;
+  activeTab = "search";
+  localStorage.removeItem("letop_user");
+  closeSettingsSheet();
+  showToast("Déconnecté");
+  renderPage();
+}
+
+async function deleteDocsFrom(ref) {
+  const snap = await getDocs(ref);
+  await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+}
+
+async function deleteUserRecos(userId) {
+  const snap = await getDocs(collection(db, "sentRecos"));
+  const docs = snap.docs.filter(d => d.data().to === userId || d.data().from === userId);
+  await Promise.all(docs.map(d => deleteDoc(d.ref)));
+}
+
+async function deleteCurrentAccount() {
+  if (!currentUser) return;
+  const userId = currentUser;
+  const me = profileById(userId) || fallbackProfile(userId);
+  const typed = prompt(`Pour supprimer ${me.name}, tape exactement son prénom :`);
+  if (typed !== me.name) {
+    if (typed !== null) showToast("Suppression annulée");
+    return;
+  }
+  try {
+    await Promise.all([
+      deleteDoc(doc(db, "profiles", userId)),
+      deleteDoc(doc(db, "rankings", userId)),
+      deleteDoc(doc(db, "watched", userId)),
+      deleteDoc(doc(db, "watchlist", userId)),
+      deleteDocsFrom(collection(db, "pushTokens", userId, "tokens")),
+      deleteUserRecos(userId)
+    ]);
+    PROFILES = PROFILES.filter(p => p.id !== userId);
+    delete allRankings[userId];
+    delete allWatched[userId];
+    delete allWatchlist[userId];
+    incomingRecos = incomingRecos.filter(r => r.to !== userId && r.from !== userId);
+    currentUser = null;
+    viewingUser = null;
+    onboardingNewUser = null;
+    creatingProfile = false;
+    activeTab = "search";
+    localStorage.removeItem("letop_user");
+    closeSettingsSheet();
+    showToast("Compte supprimé");
+    renderPage();
+  } catch (e) {
+    showToast("Erreur de suppression");
+  }
+}
+
+async function handleSettingsAction(action) {
+  if (action === "notifications") {
+    closeSettingsSheet();
+    await enablePushNotifications();
+  } else if (action === "install") {
+    closeSettingsSheet();
+    openInstallSheet();
+  } else if (action === "reset-top") {
+    if (confirm("Vider ton Top ? Tes films vus et À voir restent gardés.")) {
+      await saveRankingToCloud(currentUser, []).catch(() => showToast("Erreur d'enregistrement"));
+      closeSettingsSheet();
+      showToast("Top vidé");
+      renderPage();
+    }
+  } else if (action === "logout") {
+    logoutCurrentUser();
+  } else if (action === "delete-account") {
+    await deleteCurrentAccount();
+  }
+}
+
 function setupPwaInstallMetadata() {
   const links = [
     { rel: "apple-touch-icon", href: "./apple-touch-icon.png" },
@@ -2001,6 +2143,10 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target.id === "install-overlay") closeInstallSheet();
   });
   document.getElementById("btn-close-install").addEventListener("click", closeInstallSheet);
+  document.getElementById("settings-overlay").addEventListener("click", (e) => {
+    if (e.target.id === "settings-overlay") closeSettingsSheet();
+  });
+  document.getElementById("btn-close-settings").addEventListener("click", closeSettingsSheet);
   document.getElementById("rating-overlay").addEventListener("click", (e) => {
     if (e.target.id === "rating-overlay") closeRatingSheet();
   });
@@ -2169,6 +2315,7 @@ body {
 
 /* ═══════════════ ONBOARDING ═══════════════ */
 .onboard-screen { min-height: 100vh; padding: 60px 24px 24px; }
+.onboard-screen .profile-logo-img { display: block; margin: 0 auto 20px; }
 .onboard-step { font-size: 11px; font-weight: 700; color: var(--lav-deep); letter-spacing: 1.5px; margin-bottom: 8px; }
 .onboard-title { font-weight: 800; font-size: 26px; margin-bottom: 10px; }
 .onboard-text { font-size: 14px; color: var(--ink-soft); font-weight: 500; line-height: 1.6; }
@@ -2231,7 +2378,9 @@ body {
   box-shadow: 4px 4px 8px var(--shadow-d), -4px -4px 8px var(--shadow-l);
   display: flex; align-items: center; justify-content: center; font-size: 15px;
   transition: all 0.15s cubic-bezier(.2,.8,.2,1); cursor: pointer;
+  color: var(--lav-deep);
 }
+.icon-pill .tab-svg { width: 20px; height: 20px; }
 .icon-pill:active {
   box-shadow: inset 3px 3px 6px var(--shadow-d), inset -3px -3px 6px var(--shadow-l);
   transform: scale(0.94);
@@ -2540,6 +2689,31 @@ body {
 .install-steps { display: flex; flex-direction: column; gap: 8px; padding: 0 4px 10px; }
 .install-step { background: var(--bg); border-radius: 14px; padding: 12px; font-size: 13px; font-weight: 700; color: var(--ink); }
 .install-step span { display: inline-flex; width: 24px; height: 24px; align-items: center; justify-content: center; margin-right: 8px; border-radius: 50%; background: var(--lav); color: white; font-size: 11px; }
+.settings-sheet { max-width: 520px; }
+.settings-profile {
+  display: flex; align-items: center; gap: 12px; padding: 8px 10px 14px;
+}
+.settings-name { font-size: 18px; font-weight: 800; }
+.settings-meta { color: var(--ink-soft); font-size: 12px; font-weight: 700; margin-top: 2px; }
+.settings-group {
+  background: rgba(246,244,252,0.78); border-radius: 18px; padding: 6px; margin: 0 4px 10px;
+  box-shadow: inset 3px 3px 8px rgba(180,170,220,0.18), inset -3px -3px 8px rgba(255,255,255,0.85);
+}
+.settings-item {
+  width: 100%; border: none; background: transparent; font-family: 'Plus Jakarta Sans', sans-serif; text-align: left;
+}
+.settings-item + .settings-item { margin-top: 2px; }
+.settings-item span:not(.settings-icon) { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.settings-item strong { font-size: 14px; line-height: 1.2; }
+.settings-item small { color: var(--ink-soft); font-size: 11px; font-weight: 700; line-height: 1.35; }
+.settings-icon {
+  width: 34px; height: 34px; border-radius: 12px; flex: 0 0 34px; display: grid; place-items: center;
+  color: var(--lav-deep); background: var(--bg);
+  box-shadow: 3px 3px 7px var(--shadow-d), -3px -3px 7px var(--shadow-l);
+}
+.settings-icon .tab-svg { width: 19px; height: 19px; }
+.settings-item.danger .settings-icon { color: #d64668; }
+.settings-item.danger small, .settings-item.danger strong { color: #d64668; }
 .rating-subtitle { font-family: 'DM Mono', monospace; color: var(--ink-soft); font-size: 11px; margin-top: 3px; }
 .rating-options { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; padding: 0 6px 12px; }
 .rating-choice {
@@ -2630,6 +2804,15 @@ body {
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
     <button class="btn-primary" id="btn-close-install">OK</button>
+  </div>
+</div>
+
+<div class="context-overlay" id="settings-overlay">
+  <div class="context-sheet settings-sheet">
+    <div class="context-handle"></div>
+    <div class="install-title">Réglages</div>
+    <div id="settings-content"></div>
+    <button class="btn-secondary" id="btn-close-settings">Fermer</button>
   </div>
 </div>
 
