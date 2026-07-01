@@ -70,6 +70,7 @@ let suppressNextRankClick = false;
 let onboardingNewUser = null;
 let incomingRecos = [];
 let PROFILES = []; // chargé dynamiquement depuis Firestore
+let PROFILE_INDEX = [];
 let creatingProfile = false; // état "créer un nouveau profil" sur l'écran de sélection
 let deferredInstallPrompt = null;
 let recommendationRequestSeq = 0;
@@ -84,6 +85,7 @@ const PENDING_PUSH_TOKEN_KEY = "letop_pending_push_token";
 const PUSH_BOUND_KEY = "letop_push_bound";
 const USER_NAME_KEY = "letop_user_name";
 const repairingProfileIds = new Set();
+const publishedProfileIds = new Set();
 
 window.addEventListener("beforeinstallprompt", (event) => {
   event.preventDefault();
@@ -109,19 +111,19 @@ document.addEventListener("visibilitychange", () => {
 
 async function saveRankingToCloud(userId, rankedArray) {
   if (!userId) return;
-  if (userId === currentUser && !profileById(userId)) await ensureProfileInCloud(userId);
+  if (userId === currentUser) await ensureProfileInCloud(userId);
   allRankings = { ...allRankings, [userId]: rankedArray };
   await setDoc(doc(db, "rankings", userId), { movies: rankedArray, updatedAt: Date.now() });
 }
 async function saveWatchedToCloud(userId, watchedArray) {
   if (!userId) return;
-  if (userId === currentUser && !profileById(userId)) await ensureProfileInCloud(userId);
+  if (userId === currentUser) await ensureProfileInCloud(userId);
   allWatched = { ...allWatched, [userId]: watchedArray };
   await setDoc(doc(db, "watched", userId), { movies: watchedArray, updatedAt: Date.now() });
 }
 async function saveWatchlistToCloud(userId, watchlistArray) {
   if (!userId) return;
-  if (userId === currentUser && !profileById(userId)) await ensureProfileInCloud(userId);
+  if (userId === currentUser) await ensureProfileInCloud(userId);
   allWatchlist = { ...allWatchlist, [userId]: watchlistArray };
   await setDoc(doc(db, "watchlist", userId), { movies: watchlistArray, updatedAt: Date.now() });
 }
@@ -164,30 +166,49 @@ function profileNameFromId(profileId) {
     .map(part => part[0]?.toUpperCase() + part.slice(1))
     .join(" ") || "Profil";
 }
+function profilePayload(userId, preferredName = "") {
+  const existing = profileById(userId) || {};
+  const storedName = userId === currentUser ? (localStorage.getItem(USER_NAME_KEY) || "") : "";
+  const name = (preferredName || existing.name || storedName || profileNameFromId(userId)).trim();
+  return {
+    id: userId,
+    name,
+    initial: existing.initial || name[0]?.toUpperCase() || "?",
+    color: existing.color || PROFILE_COLORS[Math.max(PROFILES.length + PROFILE_INDEX.length, 0) % PROFILE_COLORS.length],
+    createdAt: existing.createdAt || Date.now(),
+    updatedAt: Date.now()
+  };
+}
 async function createProfile(id, name) {
-  const color = PROFILE_COLORS[PROFILES.length % PROFILE_COLORS.length];
-  await setDoc(doc(db, "profiles", id), {
-    id, name, initial: name.trim()[0]?.toUpperCase() || "?",
-    color, createdAt: Date.now()
-  }, { merge: true });
+  const payload = profilePayload(id, name);
+  await Promise.all([
+    setDoc(doc(db, "profiles", id), payload, { merge: true }),
+    setDoc(doc(db, "profileIndex", id), payload, { merge: true })
+  ]);
+  PROFILES = [...PROFILES.filter(p => p.id !== id), payload];
+  PROFILE_INDEX = [...PROFILE_INDEX.filter(p => p.id !== id), payload];
+  publishedProfileIds.add(id);
 }
 async function ensureProfileInCloud(userId, preferredName = "") {
-  if (!userId || profileById(userId) || repairingProfileIds.has(userId)) return;
+  if (!userId || repairingProfileIds.has(userId) || publishedProfileIds.has(userId)) return;
   repairingProfileIds.add(userId);
-  const storedName = localStorage.getItem(USER_NAME_KEY) || "";
-  const name = (preferredName || storedName || profileNameFromId(userId)).trim();
-  const color = PROFILE_COLORS[Math.max(PROFILES.length, 0) % PROFILE_COLORS.length];
+  const payload = profilePayload(userId, preferredName);
   try {
-    await setDoc(doc(db, "profiles", userId), {
-      id: userId,
-      name,
-      initial: name[0]?.toUpperCase() || "?",
-      color,
-      createdAt: Date.now(),
-      repairedAt: Date.now()
-    }, { merge: true });
+    await Promise.all([
+      setDoc(doc(db, "profiles", userId), payload, { merge: true }),
+      setDoc(doc(db, "profileIndex", userId), payload, { merge: true })
+    ]);
+    PROFILES = [...PROFILES.filter(p => p.id !== userId), payload];
+    PROFILE_INDEX = [...PROFILE_INDEX.filter(p => p.id !== userId), payload];
+    publishedProfileIds.add(userId);
   } catch (e) {
-    showToast("Profil pas encore synchronisé");
+    try {
+      await setDoc(doc(db, "profiles", userId), payload, { merge: true });
+      PROFILES = [...PROFILES.filter(p => p.id !== userId), payload];
+      publishedProfileIds.add(userId);
+    } catch (err) {
+      showToast("Profil pas encore synchronisé");
+    }
   } finally {
     repairingProfileIds.delete(userId);
   }
@@ -199,6 +220,14 @@ function listenProfiles(cb) {
     list.sort((a,b) => (a.createdAt||0) - (b.createdAt||0));
     cb(list, snap.metadata);
   }, () => cb([], { fromCache: false, hasPendingWrites: false, failed: true }));
+}
+function listenProfileIndex(cb) {
+  return onSnapshot(collection(db, "profileIndex"), snap => {
+    const list = [];
+    snap.forEach(d => list.push(normalizeProfileData(d.data(), d.id)));
+    list.sort((a,b) => (a.createdAt||0) - (b.createdAt||0));
+    cb(list);
+  }, () => cb([]));
 }
 
 // ─── RECOMMANDATIONS ENTRE PROFILS ─────────────────────────────────
@@ -265,7 +294,7 @@ function getAllMovieIdsForUser(userId) {
   return new Set((allRankings[userId] || []).map(m => m.id));
 }
 function profileById(profileId) {
-  return PROFILES.find(pr => pr.id === profileId) || null;
+  return PROFILES.find(pr => pr.id === profileId) || PROFILE_INDEX.find(pr => pr.id === profileId) || null;
 }
 function fallbackProfile(profileId) {
   const label = String(profileId || "profil");
@@ -298,6 +327,7 @@ function allKnownProfiles() {
     map.set(normalized.id, { ...(map.get(normalized.id) || {}), ...normalized });
   };
 
+  PROFILE_INDEX.forEach(p => addProfile(p, p.id));
   PROFILES.forEach(p => addProfile(p, p.id));
   Object.keys(allRankings).forEach(id => addProfile(profileById(id), id));
   Object.keys(allWatched).forEach(id => addProfile(profileById(id), id));
@@ -897,7 +927,7 @@ function renderApp() {
     renderProfilePicker();
     return;
   }
-  if (currentUser && !profileById(currentUser)) ensureProfileInCloud(currentUser, me.name);
+  if (currentUser) ensureProfileInCloud(currentUser, me.name);
   let viewed = profileById(viewingUser) || (!profilesServerConfirmed && viewingUser ? fallbackProfile(viewingUser) : null);
   if (!viewed && activeTab === "friends") {
     viewed = friendProfiles().find(p => p.id === viewingUser) || null;
@@ -1937,6 +1967,8 @@ async function deleteCurrentAccount() {
   }
 
   PROFILES = PROFILES.filter(p => p.id !== userId);
+  PROFILE_INDEX = PROFILE_INDEX.filter(p => p.id !== userId);
+  publishedProfileIds.delete(userId);
   delete allRankings[userId];
   delete allWatched[userId];
   delete allWatchlist[userId];
@@ -1956,6 +1988,7 @@ async function deleteCurrentAccount() {
   try {
     await Promise.all([
       deleteDoc(doc(db, "profiles", userId)),
+      deleteDoc(doc(db, "profileIndex", userId)),
       deleteDoc(doc(db, "rankings", userId)),
       deleteDoc(doc(db, "watched", userId)),
       deleteDoc(doc(db, "watchlist", userId)),
@@ -2476,6 +2509,11 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!onboardingNewUser && serverConfirmed) normalizeActiveUsers();
     if (currentUser && !viewingUser) viewingUser = currentUser;
     renderPage();
+  });
+  listenProfileIndex(list => {
+    PROFILE_INDEX = list;
+    if (currentUser && !profileById(currentUser)) ensureProfileInCloud(currentUser);
+    if (profilesSynced && rankingsSynced && currentUser && !onboardingNewUser) renderPage();
   });
   listenAllRankings(data => {
     allRankings = data;
