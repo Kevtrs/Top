@@ -9,11 +9,15 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Le Top 🍿</title>
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png">
+<link rel="manifest" href="./site.webmanifest">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, doc, setDoc, deleteDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getMessaging, getToken, isSupported as isMessagingSupported, onMessage } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js";
 
 // ─── CONFIG ───────────────────────────────────────────────────────
 const FIREBASE_CONFIG = {
@@ -33,11 +37,12 @@ const PROFILE_COLORS = [
 
 const TMDB_IMG = "https://image.tmdb.org/t/p/w342";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
+const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
 
 const APP_TABS = [
+  { id: "search", label: "Recherche", icon: "search", color: "var(--lav)" },
   { id: "top", label: "Top", icon: "crown", color: "var(--gold)" },
   { id: "watched", label: "Vus", icon: "ticket", color: "var(--mint)" },
-  { id: "recos", label: "Recos", icon: "hand", color: "var(--pink)" },
   { id: "watchlist", label: "À voir", icon: "popcorn", color: "var(--sky)" },
   { id: "friends", label: "Amis", icon: "users", color: "var(--lav)" }
 ];
@@ -50,13 +55,18 @@ let viewingUser  = currentUser;
 let allRankings  = {};
 let allWatched = {};
 let allWatchlist = {};
-let activeTab = "top";
+let activeTab = "search";
 let recoExpanded = false;
+let recentExpanded = false;
 let draggedIndex = null;
 let activeContextIndex = null;
 let touchDragState = null;
 let pendingRatingMovie = null;
 let pendingRatingOrigin = null;
+let pendingActionMovie = null;
+let pendingActionOrigin = null;
+let pendingActionIndex = null;
+let suppressNextRankClick = false;
 let onboardingNewUser = null;
 let incomingRecos = [];
 let PROFILES = []; // chargé dynamiquement depuis Firestore
@@ -66,14 +76,17 @@ let recommendationRequestSeq = 0;
 let profilesSynced = false;
 let rankingsSynced = false;
 let profilesServerConfirmed = false;
+let foregroundPushListening = false;
 
 window.addEventListener("beforeinstallprompt", (event) => {
   event.preventDefault();
   deferredInstallPrompt = event;
+  applyPlatformMode();
 });
 
 window.addEventListener("appinstalled", () => {
   deferredInstallPrompt = null;
+  applyPlatformMode();
   const toast = document.getElementById("toast");
   if (toast) showToast("Le Top est installé");
 });
@@ -147,7 +160,7 @@ async function sendRecoToUser(toUserId, movie) {
   await setDoc(doc(db, "sentRecos", recoId), {
     to: toUserId,
     from: currentUser,
-    movie: { id: movie.id, title: movie.title, poster_path: movie.poster_path },
+    movie: simplifyMovie(movie),
     seen: false,
     createdAt: Date.now()
   });
@@ -219,8 +232,59 @@ function fallbackProfile(profileId) {
 function hasProfile(profileId) {
   return !!profileById(profileId);
 }
+function isPushConfigured() {
+  return FCM_VAPID_KEY.trim().length > 20;
+}
+function isHttpsLike() {
+  return location.protocol === "https:" || location.hostname === "localhost";
+}
+function isIosDevice() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+function isAndroidDevice() {
+  return /Android/i.test(navigator.userAgent);
+}
+function devicePlatform() {
+  if (isIosDevice()) return "ios";
+  if (isAndroidDevice()) return "android";
+  return "desktop";
+}
+function applyPlatformMode() {
+  const platform = devicePlatform();
+  document.documentElement.dataset.platform = platform;
+  document.body?.setAttribute("data-platform", platform);
+  document.documentElement.classList.toggle("is-ios", platform === "ios");
+  document.documentElement.classList.toggle("is-android", platform === "android");
+  document.documentElement.classList.toggle("is-desktop", platform === "desktop");
+  document.documentElement.classList.toggle("is-standalone", isStandaloneApp());
+}
+function installButtonLabel() {
+  if (isIosDevice()) return "📲 Ajouter à l'écran d'accueil";
+  if (isAndroidDevice()) return "📲 Installer l'app";
+  return "📲 Installer";
+}
+function installButtonTitle() {
+  if (isIosDevice()) return "Ajouter à l'écran d'accueil";
+  if (isAndroidDevice()) return "Installer l'app Android";
+  return "Installer l'app";
+}
+function canUsePushHere() {
+  return "serviceWorker" in navigator && "Notification" in window && isHttpsLike();
+}
+function tokenDocId(token) {
+  let hash = 0;
+  for (let i = 0; i < token.length; i++) hash = ((hash << 5) - hash + token.charCodeAt(i)) | 0;
+  const safeStart = token.slice(0, 18).replace(/[^A-Za-z0-9_-]/g, "_");
+  return `${safeStart}_${Math.abs(hash).toString(36)}`;
+}
+function pushBellIcon() {
+  if (!("Notification" in window)) return "🔕";
+  if (Notification.permission === "granted") return "🔔";
+  if (Notification.permission === "denied") return "🔕";
+  return "🔔";
+}
 function renderBootLoading() {
-  document.getElementById("root").innerHTML = `<div class="boot-loading"><span class="loading-spin"></span></div>`;
+  document.getElementById("root").innerHTML = `<div class="boot-loading">${appLogoHtml("boot-logo")}<span class="loading-spin"></span></div>`;
 }
 function normalizeActiveUsers() {
   if (!profilesServerConfirmed) {
@@ -245,8 +309,18 @@ function profileAvatarHtml(profileId, size) {
   return `<span class="avatar-initial-sm" style="width:${size}px;height:${size}px;background:${escapeAttr(p.color)}">${escapeHtml(p.initial)}</span>`;
 }
 
+function appLogoHtml(className, size = "full") {
+  return `<img class="${className}" src="./letop-${size === "icon" ? "icon-192" : "logo"}.png" alt="Le Top">`;
+}
+
 function tabIconHtml(icon) {
   const common = `class="tab-svg tab-svg-${icon}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"`;
+  if (icon === "search") {
+    return `<svg ${common}>
+      <circle class="tab-search-circle" cx="11" cy="11" r="8"></circle>
+      <path class="tab-search-line" d="m21 21-4.3-4.3"></path>
+    </svg>`;
+  }
   if (icon === "crown") {
     return `<svg ${common}>
       <path class="tab-crown-body" d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.734H5.81a1 1 0 0 1-.957-.734L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294z"></path>
@@ -269,6 +343,12 @@ function tabIconHtml(icon) {
       <path class="tab-hand-palm" d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"></path>
     </svg>`;
   }
+  if (icon === "clock") {
+    return `<svg ${common}>
+      <circle cx="12" cy="12" r="10"></circle>
+      <path d="M12 6v6l4 2"></path>
+    </svg>`;
+  }
   if (icon === "popcorn") {
     return `<svg ${common}>
       <path class="tab-popcorn-kernels" d="M18 8a2 2 0 0 0 0-4 2 2 0 0 0-4 0 2 2 0 0 0-4 0 2 2 0 0 0-4 0 2 2 0 0 0 0 4"></path>
@@ -284,6 +364,10 @@ function tabIconHtml(icon) {
   </svg>`;
 }
 
+function surfaceIconHtml(icon, className = "surface-icon") {
+  return `<span class="${className}">${tabIconHtml(icon)}</span>`;
+}
+
 function renderTabBar() {
   return `
   <nav class="app-tabbar-wrap" aria-label="Navigation principale">
@@ -291,7 +375,7 @@ function renderTabBar() {
       ${APP_TABS.map(tab => `
         <button class="app-tab-item ${activeTab === tab.id ? "active" : ""}" data-tab="${tab.id}" style="--tab-color:${tab.color}" type="button">
           <span class="app-tab-icon">${tabIconHtml(tab.icon)}</span>
-          <strong class="app-tab-text">${tab.label}</strong>
+          <strong class="app-tab-text ${activeTab === tab.id ? "active" : ""}">${tab.label}</strong>
         </button>
       `).join("")}
     </menu>
@@ -310,7 +394,8 @@ function renderProfilePicker() {
   }
   document.getElementById("root").innerHTML = `
   <div class="profile-screen">
-    <div class="profile-logo">Le Top 🍿</div>
+    ${appLogoHtml("profile-logo-img")}
+    <div class="profile-logo">Le Top</div>
     <div class="profile-sub">C'est qui ?</div>
     <div class="profile-cards">
       ${PROFILES.map(p => {
@@ -330,7 +415,7 @@ function renderProfilePicker() {
         <div class="profile-name">Nouveau</div>
       </div>
     </div>
-    <button class="profile-install-btn" id="btn-install-profile">📲 Ajouter à l'écran d'accueil</button>
+    <button class="profile-install-btn" id="btn-install-profile">${installButtonLabel()}</button>
   </div>`;
   document.querySelectorAll(".profile-card[data-id]").forEach(el => {
     el.addEventListener("click", () => {
@@ -500,7 +585,7 @@ function renderIncomingRecosHtml(myIncoming) {
       const fromProfile = PROFILES.find(p => p.id === r.from);
       const poster = r.movie.poster_path ? TMDB_IMG + r.movie.poster_path : "";
       return `
-      <div class="reco-banner" data-doc="${escapeAttr(r.docId)}">
+      <div class="reco-banner" data-doc="${escapeAttr(r.docId)}" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(r.movie)))}'>
         ${poster ? `<img class="reco-banner-poster" src="${poster}" alt="">` : `<div class="reco-banner-poster" style="background:#E8E4F5"></div>`}
         <div class="reco-banner-text">
           <strong>${escapeHtml(fromProfile?.name || "Quelqu'un")}</strong> te recommande
@@ -519,39 +604,71 @@ function renderSearchBox(prefix, placeholder) {
   return `
   <div class="search-wrap">
     <div class="search-box" id="${boxId}">
-      <span class="search-icon">🔍</span>
+      <span class="search-icon">${tabIconHtml("search")}</span>
       <input type="text" id="${inputId}" placeholder="${escapeAttr(placeholder)}">
     </div>
   </div>
   <div id="${resultsId}"></div>`;
 }
 
+function renderSearchTabContent(myIncoming) {
+  return `
+    ${renderIncomingRecosHtml(myIncoming)}
+    ${renderSearchBox("global", "Cherche un film...")}
+    <div class="quick-home-grid">
+      <button class="quick-home-card" data-go-tab="top" type="button">${surfaceIconHtml("crown", "quick-home-icon")}<strong>Top</strong><small>Ton classement</small></button>
+      <button class="quick-home-card" data-go-tab="watched" type="button">${surfaceIconHtml("ticket", "quick-home-icon")}<strong>Vus</strong><small>Films notés</small></button>
+      <button class="quick-home-card" data-go-tab="watchlist" type="button">${surfaceIconHtml("popcorn", "quick-home-icon")}<strong>À voir</strong><small>Pour plus tard</small></button>
+      <button class="quick-home-card" data-go-tab="friends" type="button">${surfaceIconHtml("users", "quick-home-icon")}<strong>Amis</strong><small>Leurs tops</small></button>
+    </div>
+
+    <div class="accordion-section">
+      <div class="accordion-header" id="reco-accordion-header">
+        <div class="accordion-left">
+          ${surfaceIconHtml("hand", "accordion-icon")}
+          <div>
+            <div class="accordion-title">Recommandations pour toi</div>
+            <div class="accordion-sub">Basées sur ton Top</div>
+          </div>
+        </div>
+        <div class="accordion-chevron" id="reco-chevron" style="transform:${recoExpanded ? "rotate(180deg)" : "rotate(0deg)"}">⌄</div>
+      </div>
+      <div class="accordion-body" id="reco-body" style="${recoExpanded ? "" : "display:none"}">
+        <div class="reco-scroll" id="reco-scroll"></div>
+      </div>
+    </div>
+
+    <div class="accordion-section">
+      <div class="accordion-header" id="recent-accordion-header">
+        <div class="accordion-left">
+          ${surfaceIconHtml("clock", "accordion-icon")}
+          <div>
+            <div class="accordion-title">Vu récemment</div>
+            <div class="accordion-sub">Films vus ou classés par le groupe</div>
+          </div>
+        </div>
+        <div class="accordion-chevron" id="recent-chevron" style="transform:${recentExpanded ? "rotate(180deg)" : "rotate(0deg)"}">⌄</div>
+      </div>
+      <div class="accordion-body" id="recent-body" style="${recentExpanded ? "" : "display:none"}">
+        <div class="recent-list" id="recent-list"></div>
+      </div>
+    </div>`;
+}
+
 function renderTopTabContent() {
   return `
-    ${renderSearchBox("search", "Cherche un film à ajouter au Top...")}
     <div class="section-label">Ton classement</div>
     <div class="rank-list" id="rank-list"></div>`;
 }
 
 function renderWatchedTabContent() {
   return `
-    ${renderSearchBox("watched", "Cherche un film que tu as vu...")}
     <div class="section-label">Films vus</div>
     <div class="watched-list" id="watched-list"></div>`;
 }
 
-function renderRecosTabContent(myIncoming) {
-  return `
-    ${renderIncomingRecosHtml(myIncoming)}
-    <div class="section-label">Recommandations pour toi</div>
-    <div class="reco-tab-panel">
-      <div class="reco-scroll" id="reco-scroll"></div>
-    </div>`;
-}
-
 function renderWatchlistTabContent() {
   return `
-    ${renderSearchBox("watchlist", "Cherche un film à voir plus tard...")}
     <div class="section-label">À voir</div>
     <div class="watchlist-list" id="watchlist-list"></div>`;
 }
@@ -571,8 +688,8 @@ function renderFriendsTabContent(viewed) {
 }
 
 function renderActiveTabContent(viewed, myIncoming) {
+  if (activeTab === "search") return renderSearchTabContent(myIncoming);
   if (activeTab === "watched") return renderWatchedTabContent();
-  if (activeTab === "recos") return renderRecosTabContent(myIncoming);
   if (activeTab === "watchlist") return renderWatchlistTabContent();
   if (activeTab === "friends") return renderFriendsTabContent(viewed);
   return renderTopTabContent();
@@ -594,19 +711,17 @@ function renderApp() {
     viewingUser = currentUser;
     viewed = me;
   }
-  const isOwnProfile = activeTab === "top";
-
   const myIncoming = incomingRecos.filter(r => r.to === currentUser && !r.seen);
 
   document.getElementById("root").innerHTML = `
     <div class="header">
       <div class="header-row">
         <div>
-          <div class="brand-title">Le Top 🍿</div>
-          <div class="brand-sub">${activeTabLabel()}</div>
+          <div class="brand-title">${appLogoHtml("brand-logo", "icon")}Le Top</div>
         </div>
         <div class="header-btns">
-          <button class="icon-pill" id="btn-install" title="Ajouter à l'écran d'accueil">📲</button>
+          <button class="icon-pill" id="btn-push" title="Activer les notifications">${pushBellIcon()}</button>
+          <button class="icon-pill" id="btn-install" title="${escapeAttr(installButtonTitle())}">📲</button>
           ${activeTab === "top" ? `<button class="icon-pill" id="btn-reset" title="Tout effacer">🗑️</button>` : ""}
         </div>
       </div>
@@ -623,7 +738,7 @@ function renderApp() {
   renderActiveTabView();
 
   // Marque les recos comme vues après un court délai (le temps qu'on les voie vraiment)
-  if (activeTab === "recos" && myIncoming.length) {
+  if (activeTab === "search" && myIncoming.length) {
     setTimeout(() => myIncoming.forEach(r => markRecoSeen(r.docId).catch(() => {})), 2000);
   }
 }
@@ -647,13 +762,14 @@ function renderPage() {
 }
 
 function renderActiveTabView() {
-  if (activeTab === "watched") {
+  if (activeTab === "search") {
+    if (recoExpanded) updateRecommendations();
+    if (recentExpanded) renderRecentFeed();
+  } else if (activeTab === "watched") {
     renderWatchedList();
-  } else if (activeTab === "recos") {
-    updateRecommendations();
   } else if (activeTab === "watchlist") {
     renderWatchlist();
-  } else {
+  } else if (activeTab === "top" || activeTab === "friends") {
     renderRanked();
   }
 }
@@ -675,8 +791,36 @@ function attachShelfSearch(mode) {
   });
 }
 
+function attachGlobalSearch() {
+  const box = document.getElementById("global-search-box");
+  const input = document.getElementById("global-search-input");
+  const zone = document.getElementById("global-results-zone");
+  if (!box || !input || !zone) return;
+  let searchTimeout;
+  input.addEventListener("focus", () => box.classList.add("focused"));
+  input.addEventListener("blur", () => box.classList.remove("focused"));
+  input.addEventListener("input", (e) => {
+    clearTimeout(searchTimeout);
+    const q = e.target.value;
+    if (!q.trim()) { zone.innerHTML = ""; return; }
+    zone.innerHTML = `<div class="skeleton-grid">${Array(6).fill('<div class="skeleton-card"></div>').join("")}</div>`;
+    searchTimeout = setTimeout(() => runGlobalSearch(q), 350);
+  });
+}
+
+function setupTabBarAnimation() {
+  const items = document.querySelectorAll(".app-tab-item");
+  items.forEach(item => {
+    const text = item.querySelector(".app-tab-text");
+    if (!text) return;
+    item.style.setProperty("--lineWidth", `${text.offsetWidth}px`);
+  });
+}
+
 function attachAppEvents() {
+  document.getElementById("btn-push")?.addEventListener("click", enablePushNotifications);
   document.getElementById("btn-install")?.addEventListener("click", openInstallSheet);
+  setupTabBarAnimation();
 
   document.querySelectorAll(".app-tab-item").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -685,6 +829,13 @@ function attachAppEvents() {
       activeTab = nextTab;
       if (activeTab !== "friends") viewingUser = currentUser;
       window.scrollTo({ top: 0, behavior: "smooth" });
+      renderPage();
+    });
+  });
+  document.querySelectorAll(".quick-home-card").forEach(btn => {
+    btn.addEventListener("click", () => {
+      activeTab = btn.dataset.goTab;
+      if (activeTab !== "friends") viewingUser = currentUser;
       renderPage();
     });
   });
@@ -711,7 +862,7 @@ function attachAppEvents() {
     });
   });
   document.querySelectorAll(".reco-banner").forEach(el => {
-    el.addEventListener("click", () => dismissReco(el.dataset.doc).catch(() => showToast("Erreur")));
+    el.addEventListener("click", () => openMovieActionSheet(JSON.parse(el.dataset.movie), "reco"));
   });
 
   const searchBox = document.getElementById("search-box");
@@ -729,6 +880,7 @@ function attachAppEvents() {
     });
   }
 
+  attachGlobalSearch();
   attachShelfSearch("watched");
   attachShelfSearch("watchlist");
 
@@ -738,10 +890,9 @@ function attachAppEvents() {
     if (recoExpanded) updateRecommendations();
   });
   document.getElementById("recent-accordion-header")?.addEventListener("click", () => {
-    const body = document.getElementById("recent-body");
-    const expanded = body.style.display !== "none";
-    toggleAccordion("recent", !expanded);
-    if (!expanded) renderRecentFeed();
+    recentExpanded = !recentExpanded;
+    toggleAccordion("recent", recentExpanded);
+    if (recentExpanded) renderRecentFeed();
   });
 }
 
@@ -831,6 +982,40 @@ async function runSearch(query) {
   }
 }
 
+async function runGlobalSearch(query) {
+  const zone = document.getElementById("global-results-zone");
+  const input = document.getElementById("global-search-input");
+  if (!zone || !input) return;
+  try {
+    const results = await searchMovies(query);
+    if (!document.body.contains(zone) || input.value !== query) return;
+    if (!results.length) {
+      zone.innerHTML = `<div style="padding:20px;text-align:center;color:var(--ink-faint);font-size:13px;font-weight:600">Aucun résultat</div>`;
+      return;
+    }
+    zone.innerHTML = `<div class="search-results">${results.slice(0,9).map(m => {
+      const poster = m.poster_path ? TMDB_IMG + m.poster_path : "";
+      const title = escapeHtml(m.title);
+      const year = m.release_date ? ` (${escapeHtml(m.release_date.slice(0,4))})` : "";
+      return `
+      <div class="poster-pick" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(m)))}'>
+        ${poster ? `<img src="${poster}" alt="${escapeAttr(m.title)}">` : `<div style="aspect-ratio:2/3;background:#E8E4F5;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--ink-faint);padding:6px;text-align:center">Pas d'affiche</div>`}
+        <div class="poster-pick-title">${title}${year}</div>
+      </div>`;
+    }).join("")}</div>`;
+
+    zone.querySelectorAll(".poster-pick").forEach(card => {
+      card.addEventListener("click", () => {
+        const movie = JSON.parse(card.dataset.movie);
+        openMovieActionSheet(movie, "search");
+      });
+    });
+  } catch (e) {
+    if (!document.body.contains(zone) || input.value !== query) return;
+    zone.innerHTML = `<div style="padding:20px;text-align:center;color:var(--ink-faint);font-size:13px;font-weight:600">Erreur de recherche</div>`;
+  }
+}
+
 async function runShelfSearch(query, mode) {
   const zone = document.getElementById(`${mode}-results-zone`);
   const input = document.getElementById(`${mode}-search-input`);
@@ -877,7 +1062,7 @@ function addToRanked(movie) {
   if (!currentUser) return;
   const list = myRanked();
   if (list.some(m => m.id === movie.id)) { showToast("Déjà dans ton classement"); return; }
-  const updated = [...list, movie];
+  const updated = [...list, simplifyMovie(movie)];
   saveRankingToCloud(currentUser, updated).catch(() => showToast("Erreur d'enregistrement"));
   if (viewingUser === currentUser) renderRanked();
   showToast(`${movie.title} ajouté en position ${updated.length}`);
@@ -948,6 +1133,81 @@ function removeFromWatchlist(movieId) {
   renderWatchlist();
 }
 
+function removeFromTop(movieId) {
+  const updated = myRanked().filter(m => m.id !== movieId);
+  saveRankingToCloud(currentUser, updated).catch(() => showToast("Erreur d'enregistrement"));
+  renderRanked();
+  showToast("Retiré du Top");
+}
+
+function openMovieActionSheet(movie, origin = "search", index = null) {
+  pendingActionMovie = movie;
+  pendingActionOrigin = origin;
+  pendingActionIndex = index;
+  const poster = movie.poster_path ? TMDB_IMG + movie.poster_path : "";
+  const inTop = myRanked().some(m => m.id === movie.id);
+  const inWatched = myWatched().some(m => m.id === movie.id);
+  const inWatchlist = myWatchlist().some(m => m.id === movie.id);
+
+  document.getElementById("movie-action-preview").innerHTML = `
+    ${poster ? `<img src="${poster}" alt="">` : ""}
+    <div>
+      <div class="context-preview-title">${escapeHtml(movie.title)}</div>
+      <div class="rating-subtitle">${movie.release_date ? escapeHtml(movie.release_date.slice(0,4)) : "Film"}</div>
+    </div>
+  `;
+
+  document.getElementById("movie-action-items").innerHTML = `
+    <div class="context-item movie-action-item" data-action="top"><span class="ic">🏆</span> ${inTop ? "Déjà dans ton Top" : "Ajouter au Top"}</div>
+    <div class="context-item movie-action-item" data-action="watched"><span class="ic">🎟️</span> ${inWatched ? "Modifier la note" : "Marquer comme vu"}</div>
+    <div class="context-item movie-action-item" data-action="watchlist"><span class="ic">🍿</span> ${inWatchlist ? "Déjà dans À voir" : "Ajouter à À voir"}</div>
+    <div class="context-item movie-action-item" data-action="recommend"><span class="ic">👋</span> Recommander</div>
+    ${origin === "top" ? `<div class="context-divider"></div><div class="context-item movie-action-item danger" data-action="remove-top"><span class="ic">🗑️</span> Retirer du Top</div>` : ""}
+    ${origin === "watched" ? `<div class="context-divider"></div><div class="context-item movie-action-item danger" data-action="remove-watched"><span class="ic">🗑️</span> Retirer des vus</div>` : ""}
+    ${origin === "watchlist" ? `<div class="context-divider"></div><div class="context-item movie-action-item danger" data-action="remove-watchlist"><span class="ic">🗑️</span> Retirer de À voir</div>` : ""}
+  `;
+
+  document.getElementById("movie-action-overlay").classList.add("show");
+  document.querySelectorAll(".movie-action-item").forEach(item => {
+    item.addEventListener("click", () => handleMovieAction(item.dataset.action));
+  });
+}
+
+function closeMovieActionSheet() {
+  document.getElementById("movie-action-overlay").classList.remove("show");
+  pendingActionMovie = null;
+  pendingActionOrigin = null;
+  pendingActionIndex = null;
+}
+
+function handleMovieAction(action) {
+  const movie = pendingActionMovie;
+  if (!movie) return;
+  if (action === "top") {
+    addToRanked(movie);
+    closeMovieActionSheet();
+  } else if (action === "watched") {
+    const origin = pendingActionOrigin === "watchlist" ? "watchlist" : null;
+    closeMovieActionSheet();
+    openRatingSheet(movie, origin);
+  } else if (action === "watchlist") {
+    addToWatchlist(movie);
+    closeMovieActionSheet();
+  } else if (action === "recommend") {
+    closeMovieActionSheet();
+    openRecommendSheet(movie);
+  } else if (action === "remove-top") {
+    removeFromTop(movie.id);
+    closeMovieActionSheet();
+  } else if (action === "remove-watched") {
+    removeFromWatched(movie.id);
+    closeMovieActionSheet();
+  } else if (action === "remove-watchlist") {
+    removeFromWatchlist(movie.id);
+    closeMovieActionSheet();
+  }
+}
+
 function renderRanked() {
   const el = document.getElementById("rank-list");
   if (!el) return;
@@ -956,7 +1216,7 @@ function renderRanked() {
   const list = viewedRanked();
 
   if (!list.length) {
-    el.innerHTML = `<div class="empty-state">${isOwnProfile ? "Cherche un film ci-dessus pour commencer ton classement 🎬" : "Ce profil n'a pas encore classé de film"}</div>`;
+    el.innerHTML = `<div class="empty-state">${isOwnProfile ? "Va dans Recherche pour ajouter ton premier film au Top 🎬" : "Ce profil n'a pas encore classé de film"}</div>`;
     return;
   }
   el.innerHTML = list.map((m, i) => {
@@ -993,7 +1253,7 @@ function renderWatchedList() {
   if (!el) return;
   const list = [...myWatched()].sort((a,b) => (b.watchedAt || b.addedAt || 0) - (a.watchedAt || a.addedAt || 0));
   if (!list.length) {
-    el.innerHTML = `<div class="empty-state">Cherche un film ci-dessus pour le noter sans le mettre dans ton Top</div>`;
+    el.innerHTML = `<div class="empty-state">Passe par Recherche pour noter un film sans le mettre dans ton Top</div>`;
     return;
   }
   el.innerHTML = list.map(m => {
@@ -1025,6 +1285,13 @@ function renderWatchedList() {
       if (action === "remove") removeFromWatched(parseInt(btn.dataset.id));
     });
   });
+  el.querySelectorAll(".shelf-row").forEach(row => {
+    row.addEventListener("click", (e) => {
+      if (e.target.closest(".shelf-btn")) return;
+      const movie = myWatched().find(m => m.id === parseInt(row.dataset.id));
+      if (movie) openMovieActionSheet(movie, "watched");
+    });
+  });
 }
 
 function renderWatchlist() {
@@ -1032,7 +1299,7 @@ function renderWatchlist() {
   if (!el) return;
   const list = [...myWatchlist()].sort((a,b) => (b.savedAt || b.addedAt || 0) - (a.savedAt || a.addedAt || 0));
   if (!list.length) {
-    el.innerHTML = `<div class="empty-state">Cherche un film ci-dessus pour le garder pour plus tard</div>`;
+    el.innerHTML = `<div class="empty-state">Passe par Recherche pour garder un film à voir plus tard</div>`;
     return;
   }
   el.innerHTML = list.map(m => {
@@ -1062,6 +1329,13 @@ function renderWatchlist() {
       if (action === "remove") removeFromWatchlist(parseInt(btn.dataset.id));
     });
   });
+  el.querySelectorAll(".shelf-row").forEach(row => {
+    row.addEventListener("click", (e) => {
+      if (e.target.closest(".shelf-btn")) return;
+      const movie = myWatchlist().find(m => m.id === parseInt(row.dataset.id));
+      if (movie) openMovieActionSheet(movie, "watchlist");
+    });
+  });
 }
 
 function attachRankInteractions() {
@@ -1070,11 +1344,13 @@ function attachRankInteractions() {
   rows.forEach(row => {
     row.addEventListener("dragstart", () => {
       draggedIndex = parseInt(row.dataset.index);
+      suppressNextRankClick = true;
       row.classList.add("dragging");
     });
     row.addEventListener("dragend", () => {
       row.classList.remove("dragging");
       rows.forEach(r => r.classList.remove("drop-line-top","drop-line-bottom"));
+      setTimeout(() => { suppressNextRankClick = false; }, 120);
     });
     row.addEventListener("dragover", (e) => {
       e.preventDefault();
@@ -1147,6 +1423,13 @@ function attachRankInteractions() {
     row.addEventListener("touchcancel", () => {
       cancelTouchRankDrag();
       clearPressTimer();
+    });
+
+    row.addEventListener("click", (e) => {
+      if (suppressNextRankClick || touchDragState) return;
+      const index = parseInt(row.dataset.index);
+      const movie = myRanked()[index];
+      if (movie) openMovieActionSheet(movie, "top", index);
     });
   });
 }
@@ -1271,6 +1554,8 @@ function finishTouchRankDrag() {
   touchDragState = null;
 
   if (targetIndex === null || targetIndex === sourceIndex) return;
+  suppressNextRankClick = true;
+  setTimeout(() => { suppressNextRankClick = false; }, 250);
   moveMovie(sourceIndex, targetIndex, insertAfter);
 }
 
@@ -1283,6 +1568,8 @@ function cancelTouchRankDrag() {
   ghost.remove();
   document.body.classList.remove("rank-touch-dragging");
   touchDragState = null;
+  suppressNextRankClick = true;
+  setTimeout(() => { suppressNextRankClick = false; }, 250);
 }
 
 function moveMovie(fromIdx, toIdx, insertAfter) {
@@ -1337,51 +1624,154 @@ function closeRecommendSheet() {
 }
 
 function setupPwaInstallMetadata() {
-  const iconSvg = `
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-      <rect width="512" height="512" rx="112" fill="#F6F4FC"/>
-      <circle cx="256" cy="256" r="178" fill="#FFFFFF"/>
-      <path d="M150 210h212l-22 156H172z" fill="#C9B8FF"/>
-      <path d="M158 154h210l-10 62H148z" fill="#FFD9A0"/>
-      <circle cx="214" cy="184" r="18" fill="#FF9EB5"/>
-      <circle cx="284" cy="184" r="18" fill="#A8E6CF"/>
-      <circle cx="330" cy="184" r="14" fill="#A8D8FF"/>
-    </svg>`;
-  const iconUrl = `data:image/svg+xml,${encodeURIComponent(iconSvg)}`;
-  const appleIcon = document.createElement("link");
-  appleIcon.rel = "apple-touch-icon";
-  appleIcon.href = iconUrl;
-  document.head.appendChild(appleIcon);
-
-  const manifest = {
-    name: "Le Top",
-    short_name: "Le Top",
-    start_url: location.href.split("#")[0],
-    scope: new URL(".", location.href).href,
-    display: "standalone",
-    background_color: "#F6F4FC",
-    theme_color: "#F6F4FC",
-    icons: [{ src: iconUrl, sizes: "512x512", type: "image/svg+xml", purpose: "any maskable" }]
-  };
-  const manifestUrl = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" }));
-  const manifestLink = document.createElement("link");
-  manifestLink.rel = "manifest";
-  manifestLink.href = manifestUrl;
-  document.head.appendChild(manifestLink);
+  const links = [
+    { rel: "apple-touch-icon", href: "./apple-touch-icon.png" },
+    { rel: "icon", href: "./favicon.png", type: "image/png", sizes: "64x64" },
+    { rel: "manifest", href: "./site.webmanifest" }
+  ];
+  links.forEach(linkData => {
+    let link = document.querySelector(`link[rel="${linkData.rel}"]`);
+    if (!link) {
+      link = document.createElement("link");
+      link.rel = linkData.rel;
+      document.head.appendChild(link);
+    }
+    Object.entries(linkData).forEach(([key, value]) => link.setAttribute(key, value));
+  });
 }
 function isStandaloneApp() {
   return window.navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches;
 }
+async function setupForegroundPushListener() {
+  if (foregroundPushListening || !isPushConfigured() || !canUsePushHere()) return;
+  try {
+    if (!(await isMessagingSupported())) return;
+    const messaging = getMessaging(app);
+    onMessage(messaging, payload => {
+      const body = payload.notification?.body || payload.data?.body || "Nouvelle recommandation reçue";
+      showToast(body);
+      if (profilesSynced && rankingsSynced && currentUser && !onboardingNewUser) renderPage();
+    });
+    foregroundPushListening = true;
+  } catch (e) {}
+}
+async function enablePushNotifications() {
+  if (!currentUser) {
+    showToast("Choisis d'abord ton profil");
+    return;
+  }
+  if (!isPushConfigured()) {
+    showToast("Ajoute d'abord la clé VAPID dans le code");
+    return;
+  }
+  if (!canUsePushHere()) {
+    showToast("Les notifications demandent HTTPS");
+    return;
+  }
+  if (isIosDevice() && !isStandaloneApp()) {
+    openInstallSheet();
+    showToast("Sur iPhone, ouvre l'app depuis l'écran d'accueil");
+    return;
+  }
+  try {
+    if (!(await isMessagingSupported())) {
+      showToast("Notifications non compatibles ici");
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      showToast("Notifications refusées");
+      renderPage();
+      return;
+    }
+    const registration = await navigator.serviceWorker.register("./firebase-messaging-sw.js");
+    const messaging = getMessaging(app);
+    const token = await getToken(messaging, {
+      vapidKey: FCM_VAPID_KEY,
+      serviceWorkerRegistration: registration
+    });
+    if (!token) {
+      showToast("Impossible d'activer les notifs");
+      return;
+    }
+    const now = Date.now();
+    await setDoc(doc(db, "pushTokens", currentUser, "tokens", tokenDocId(token)), {
+      token,
+      profileId: currentUser,
+      userAgent: navigator.userAgent,
+      platform: navigator.platform || "",
+      updatedAt: now,
+      createdAt: now
+    }, { merge: true });
+    await setupForegroundPushListener();
+    showToast("Notifications activées 🔔");
+    renderPage();
+  } catch (e) {
+    showToast("Erreur notifications");
+  }
+}
+function installSheetCopy() {
+  const platform = devicePlatform();
+  if (platform === "ios") {
+    return {
+      title: "Ajouter Le Top à l'écran d'accueil",
+      text: "Sur iPhone, les notifications marchent après avoir ajouté l'app à l'écran d'accueil puis ouvert Le Top depuis son icône.",
+      steps: [
+        "Ouvre cette page dans Safari",
+        "Appuie sur le bouton Partager",
+        "Choisis \"Sur l'écran d'accueil\"",
+        "Ouvre Le Top depuis l'icône, puis appuie sur la cloche"
+      ]
+    };
+  }
+  if (platform === "android") {
+    return {
+      title: "Installer Le Top sur Android",
+      text: "Sur Android, Chrome peut installer Le Top comme une vraie app. Les notifications peuvent ensuite être activées avec la cloche.",
+      steps: [
+        deferredInstallPrompt ? "Appuie sur Installer quand Android le propose" : "Ouvre cette page dans Chrome",
+        deferredInstallPrompt ? "Confirme l'installation" : "Appuie sur le menu ⋮",
+        deferredInstallPrompt ? "Ouvre Le Top depuis l'icône" : "Choisis \"Installer l'application\" ou \"Ajouter à l'écran d'accueil\"",
+        "Appuie sur la cloche pour autoriser les notifications"
+      ]
+    };
+  }
+  return {
+    title: "Installer Le Top",
+    text: "Sur ordinateur, Chrome ou Edge peuvent ouvrir Le Top comme une app séparée. Les notifications peuvent être activées avec la cloche.",
+    steps: [
+      "Ouvre cette page dans Chrome ou Edge",
+      "Clique sur l'icône Installer dans la barre d'adresse, ou dans le menu",
+      "Confirme l'installation",
+      "Appuie sur la cloche pour autoriser les notifications"
+    ]
+  };
+}
+function renderInstallSheetContent() {
+  const copy = installSheetCopy();
+  const title = document.getElementById("install-title");
+  const text = document.getElementById("install-text");
+  const steps = document.getElementById("install-steps");
+  if (title) title.textContent = copy.title;
+  if (text) text.textContent = copy.text;
+  if (steps) {
+    steps.innerHTML = copy.steps.map((step, i) => `
+      <div class="install-step"><span>${i + 1}</span>${escapeHtml(step)}</div>
+    `).join("");
+  }
+}
 function openInstallSheet() {
+  applyPlatformMode();
   if (isStandaloneApp()) {
     showToast("Le Top est déjà sur l'écran d'accueil");
     return;
   }
-  if (deferredInstallPrompt) {
+  if (deferredInstallPrompt && !isIosDevice()) {
     deferredInstallPrompt.prompt();
     deferredInstallPrompt.userChoice.finally(() => { deferredInstallPrompt = null; });
     return;
   }
+  renderInstallSheetContent();
   document.getElementById("install-overlay").classList.add("show");
 }
 function closeInstallSheet() {
@@ -1499,15 +1889,14 @@ async function updateRecommendations() {
         <div class="reco-item-body">
           <div class="reco-item-title">${title}</div>
           <div class="reco-item-meta">${year} · ⭐${rating}</div>
-          <button class="reco-add-btn" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(m)))}'>+ Ajouter</button>
+          <button class="reco-add-btn" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(m)))}'>Choisir</button>
         </div>
       </div>`;
     }).join("");
 
     scroll.querySelectorAll(".reco-add-btn").forEach(btn => {
       btn.addEventListener("click", () => {
-        addToRanked(JSON.parse(btn.dataset.movie));
-        btn.textContent = "✓"; btn.disabled = true;
+        openMovieActionSheet(JSON.parse(btn.dataset.movie), "recommendation");
       });
     });
   } catch (e) {
@@ -1518,34 +1907,50 @@ async function updateRecommendations() {
 
 function renderRecentFeed() {
   const el = document.getElementById("recent-list");
+  if (!el) return;
 
   const entries = [];
+  Object.entries(allWatched).forEach(([userId, list]) => {
+    const profile = PROFILES.find(p => p.id === userId);
+    if (!profile) return;
+    list.forEach(m => {
+      const rating = Number.isFinite(Number(m.rating)) ? `${Number(m.rating)}/10` : "vu";
+      entries.push({
+        movie: m,
+        userId,
+        profile,
+        label: rating,
+        addedAt: m.watchedAt || m.addedAt || 0
+      });
+    });
+  });
   Object.entries(allRankings).forEach(([userId, list]) => {
     const profile = PROFILES.find(p => p.id === userId);
     if (!profile) return;
     list.forEach((m, i) => {
-      entries.push({ movie: m, userId, profile, position: i + 1, addedAt: m.addedAt || 0 });
+      entries.push({ movie: m, userId, profile, label: `#${i + 1}`, addedAt: m.addedAt || 0 });
     });
   });
 
   const byMovie = {};
   entries.forEach(e => {
     if (!byMovie[e.movie.id]) byMovie[e.movie.id] = { movie: e.movie, raters: [], latestAddedAt: 0 };
-    byMovie[e.movie.id].raters.push({ profile: e.profile, position: e.position });
+    const existing = byMovie[e.movie.id].raters.find(r => r.profile.id === e.profile.id && r.label === e.label);
+    if (!existing) byMovie[e.movie.id].raters.push({ profile: e.profile, label: e.label });
     byMovie[e.movie.id].latestAddedAt = Math.max(byMovie[e.movie.id].latestAddedAt, e.addedAt);
   });
 
   const grouped = Object.values(byMovie).sort((a,b) => b.latestAddedAt - a.latestAddedAt).slice(0, 20);
 
   if (!grouped.length) {
-    el.innerHTML = `<div class="empty-state" style="margin:0">Personne n'a encore classé de film</div>`;
+    el.innerHTML = `<div class="empty-state" style="margin:0">Personne n'a encore vu ou classé de film</div>`;
     return;
   }
 
   el.innerHTML = grouped.map(g => {
     const poster = g.movie.poster_path ? TMDB_IMG + g.movie.poster_path : "";
     return `
-    <div class="recent-row">
+    <div class="recent-row" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(g.movie)))}'>
       ${poster ? `<img class="recent-poster" src="${poster}" alt="${escapeAttr(g.movie.title)}">` : `<div class="recent-poster" style="background:#E8E4F5"></div>`}
       <div class="recent-info">
         <div class="recent-title">${escapeHtml(g.movie.title)}</div>
@@ -1553,17 +1958,26 @@ function renderRecentFeed() {
           ${g.raters.map(r => `
             <span class="rater-chip" style="--pc:${escapeAttr(r.profile.color)}">
               <span class="rater-initial">${escapeHtml(r.profile.initial)}</span>
-              #${r.position}
+              ${escapeHtml(r.label)}
             </span>
           `).join("")}
         </div>
       </div>
     </div>`;
   }).join("");
+
+  el.querySelectorAll(".recent-row").forEach(row => {
+    row.addEventListener("click", () => {
+      openMovieActionSheet(JSON.parse(row.dataset.movie), "recent");
+    });
+  });
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  applyPlatformMode();
   setupPwaInstallMetadata();
+  setupForegroundPushListener();
+  renderInstallSheetContent();
   renderBootLoading();
 
   setTimeout(() => {
@@ -1579,6 +1993,9 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   document.getElementById("recommend-overlay").addEventListener("click", (e) => {
     if (e.target.id === "recommend-overlay") closeRecommendSheet();
+  });
+  document.getElementById("movie-action-overlay").addEventListener("click", (e) => {
+    if (e.target.id === "movie-action-overlay") closeMovieActionSheet();
   });
   document.getElementById("install-overlay").addEventListener("click", (e) => {
     if (e.target.id === "install-overlay") closeInstallSheet();
@@ -1655,6 +2072,7 @@ document.addEventListener("DOMContentLoaded", () => {
   listenAllWatched(data => {
     allWatched = data;
     if (profilesSynced && rankingsSynced && currentUser && activeTab === "watched") renderWatchedList();
+    if (profilesSynced && rankingsSynced && currentUser && activeTab === "search" && recentExpanded) renderRecentFeed();
   });
   listenAllWatchlist(data => {
     allWatchlist = data;
@@ -1705,6 +2123,12 @@ body {
   min-height: 100vh; background: var(--bg);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   padding: 40px 24px;
+}
+.profile-logo-img {
+  width: 112px; height: 112px; border-radius: 28px; object-fit: cover; margin-bottom: 14px;
+  background: rgba(255,255,255,0.72);
+  border: 1px solid rgba(154,147,184,0.18);
+  box-shadow: 0 12px 34px rgba(154,147,184,0.24), 8px 8px 22px var(--shadow-d), -8px -8px 22px rgba(255,255,255,0.96);
 }
 .profile-logo { font-weight: 800; font-size: 34px; margin-bottom: 4px; }
 .profile-sub { font-size: 13px; color: var(--ink-soft); font-weight: 600; margin-bottom: 36px; }
@@ -1793,7 +2217,13 @@ body {
   backdrop-filter: blur(16px) saturate(1.4);
 }
 .header-row { display:flex; align-items:center; justify-content:space-between; padding-top: 8px; }
-.brand-title { font-weight: 800; font-size: 26px; letter-spacing: -0.5px; }
+.brand-title { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 26px; letter-spacing: -0.5px; }
+.brand-logo {
+  width: 38px; height: 38px; border-radius: 12px; object-fit: cover; flex-shrink: 0;
+  background: rgba(255,255,255,0.78);
+  border: 1px solid rgba(154,147,184,0.18);
+  box-shadow: 0 6px 16px rgba(154,147,184,0.22), 3px 3px 8px var(--shadow-d), -3px -3px 8px var(--shadow-l);
+}
 .brand-sub { font-size: 11px; color: var(--ink-soft); font-weight: 600; margin-top: -2px; }
 .header-btns { display: flex; gap: 8px; }
 .icon-pill {
@@ -1812,50 +2242,62 @@ body {
 
 .app-tabbar-wrap {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 350;
-  padding: 0 12px calc(env(safe-area-inset-bottom, 0px) + 10px);
+  padding: 0 10px calc(env(safe-area-inset-bottom, 0px) + 8px);
   pointer-events: none;
 }
 .app-tabbar {
-  margin: 0 auto; width: min(520px, 100%); height: 74px; display: flex; align-items: center;
-  padding: 9px 9px 15px; border-radius: 24px 24px 32px 32px; background: rgba(255,255,255,0.94);
+  margin: 0 auto; width: min(54em, 100%); height: 8.6em; display: flex; align-items: center;
+  padding: 0 1.7em 2.2em; border-radius: 2.2em 2.2em 4.2em 4.2em; background: rgba(255,255,255,0.94);
   box-shadow: 8px 8px 22px var(--shadow-d), -8px -8px 22px var(--shadow-l);
   backdrop-filter: blur(18px) saturate(1.25); position: relative; pointer-events: auto;
+  font-size: clamp(8px, 2.25vw, 10px); user-select: none;
 }
 .app-tabbar::after {
-  content: ""; position: absolute; left: 50%; bottom: 7px; width: 34%; height: 5px;
+  content: ""; position: absolute; left: 50%; bottom: 1.05em; width: 35%; height: .48em;
   transform: translateX(-50%); border-radius: 999px; background: rgba(199,194,221,0.25);
 }
 .app-tab-item {
-  all: unset; flex: 1; min-width: 0; height: 50px; display: flex; align-items: center; justify-content: center;
+  all: unset; flex-grow: 1; min-width: 0; height: 5.4em; display: flex; align-items: center; justify-content: center;
   color: #CDD2D7; position: relative; overflow: hidden; border-radius: 18px; cursor: pointer;
-  transition: flex 0.45s cubic-bezier(0.4,0,0.2,1), color 0.35s cubic-bezier(0.4,0,0.2,1);
+  transition: flex-grow 0.45s cubic-bezier(0.4,0,0.2,1), color 0.35s cubic-bezier(0.4,0,0.2,1);
 }
 .app-tab-item::before {
-  content: ""; position: absolute; left: 50%; top: 50%; width: 28px; height: 28px; border-radius: 50%;
+  content: ""; position: absolute; left: 2.15em; top: 50%; width: 1.75em; height: 1.75em; border-radius: 50%;
   background: #FDECEF; background: color-mix(in srgb, var(--tab-color) 28%, white); opacity: 0;
-  transform: translate(-50%, -50%) scale(0.25); transition: transform 0.45s cubic-bezier(.34,1.56,.64,1), opacity 0.25s;
+  transform: translateY(-50%) scale(0); transform-origin: center; transition: transform 0.45s cubic-bezier(.34,1.56,.64,1), opacity 0.25s;
 }
 .app-tab-item::after {
-  content: ""; position: absolute; left: 52px; bottom: 5px; width: 34px; height: 3px;
-  border-radius: 99px; background: currentColor; transform: scaleX(0); transform-origin: left center;
+  content: ""; position: absolute; left: 4.85em; bottom: .2em; width: calc(var(--lineWidth, 3em) + .5em); height: .25em;
+  border-radius: 2em; background: currentColor; transform: scaleX(0); transform-origin: left center;
   transition: transform 0.45s cubic-bezier(0.4,0,0.2,1);
 }
-.app-tab-item.active { flex: 2.45; color: var(--lav-deep); color: color-mix(in srgb, var(--tab-color) 70%, var(--lav-deep)); }
-.app-tab-item.active::before { opacity: 1; transform: translate(calc(-50% - 36px), -50%) scale(1); }
+.app-tab-item.active { flex: 0 0 16.2em; min-width: 16.2em; color: var(--lav-deep); color: color-mix(in srgb, var(--tab-color) 70%, var(--lav-deep)); }
+.app-tab-item.active::before { opacity: 1; transform: translateY(-50%) scale(1); }
 .app-tab-item.active::after { transform: scaleX(1); }
-.app-tab-icon { width: 30px; height: 30px; display: grid; place-items: center; position: relative; z-index: 1; transition: transform 0.45s cubic-bezier(0.4,0,0.2,1); }
-.app-tab-item.active .app-tab-icon { transform: translateX(-36px); }
-.app-tab-text {
-  position: absolute; left: 54px; top: 14px; font-size: 15px; font-weight: 800; letter-spacing: 0;
-  transform: translateY(150%); opacity: 0; transition: transform 0.22s ease, opacity 0.18s ease;
+.app-tab-icon {
+  font-size: 1.05em; width: 3.1em; height: 3.1em; display: grid; place-items: center;
+  position: relative; z-index: 1; transition: transform 0.45s cubic-bezier(0.4,0,0.2,1);
 }
-.app-tab-item.active .app-tab-text { transform: translateY(0); opacity: 1; transition-delay: 0.12s; }
-.tab-svg { width: 27px; height: 27px; display: block; }
+.app-tab-item.active .app-tab-icon {
+  position: absolute; left: 1.45em; top: 50%;
+  transform: translateY(-50%);
+}
+.app-tab-text {
+  position: absolute; left: 4.85em; top: 50%; max-width: calc(100% - 5.2em);
+  font-size: 1.22em; font-weight: 800; letter-spacing: 0;
+  transform: translate3d(0,120%,0); opacity: 0; transition: transform 0.16s ease, opacity 0.12s ease;
+  white-space: nowrap; line-height: 1; overflow: hidden;
+}
+.app-tab-text.active { transform: translate3d(0,-50%,0); opacity: 1; transition: transform 0.3s ease 0.1s, opacity 0.2s ease 0.1s; }
+.tab-svg { width: 2.55em; height: 2.55em; display: block; }
+.app-tab-item.active[data-tab="search"] .tab-search-circle { animation: tab-search-pulse 0.7s ease; }
+.app-tab-item.active[data-tab="search"] .tab-search-line { animation: tab-search-line 0.7s ease; transform-origin: 17px 17px; }
 .app-tab-item.active[data-tab="top"] .tab-svg { animation: tab-crown-pop 0.7s cubic-bezier(.34,1.56,.64,1); }
 .app-tab-item.active[data-tab="watched"] .tab-svg { animation: tab-ticket-snap 0.7s ease; }
-.app-tab-item.active[data-tab="recos"] .tab-svg { transform-origin: 70% 85%; animation: tab-hand-wave 0.75s ease; }
 .app-tab-item.active[data-tab="watchlist"] .tab-popcorn-kernels { animation: tab-popcorn-pop 0.75s ease; }
 .app-tab-item.active[data-tab="friends"] .tab-users-side { animation: tab-users-slide 0.65s ease; }
+@keyframes tab-search-pulse { 0%,100% { transform: scale(1); } 42% { transform: scale(0.86); } 70% { transform: scale(1.08); } }
+@keyframes tab-search-line { 0%,100% { transform: rotate(0deg); } 45% { transform: rotate(-14deg) translate(-1px, 1px); } }
 @keyframes tab-crown-pop { 0% { transform: translateY(0) scale(1); } 35% { transform: translateY(-4px) scale(1.08); } 70% { transform: translateY(2px) scale(0.96); } 100% { transform: translateY(0) scale(1); } }
 @keyframes tab-ticket-snap { 0%,100% { transform: rotate(0); } 30% { transform: rotate(-8deg) translateY(-1px); } 60% { transform: rotate(5deg); } }
 @keyframes tab-hand-wave { 0%,100% { transform: rotate(0deg); } 25% { transform: rotate(15deg); } 55% { transform: rotate(-9deg); } 78% { transform: rotate(7deg); } }
@@ -1888,7 +2330,32 @@ body {
 .search-box.focused { box-shadow: inset 4px 4px 8px var(--shadow-d), inset -4px -4px 8px var(--shadow-l), 0 0 0 3px rgba(201,184,255,0.4); }
 .search-box input { border: none; background: transparent; outline: none; flex: 1; font-family: 'Plus Jakarta Sans', sans-serif; font-size: 16px; font-weight: 500; color: var(--ink); }
 .search-box input::placeholder { color: var(--ink-faint); font-weight: 500; }
-.search-icon { font-size: 16px; opacity: 0.4; }
+.search-icon { width: 19px; height: 19px; color: var(--lav-deep); opacity: 0.45; display: grid; place-items: center; flex-shrink: 0; }
+.search-icon .tab-svg { width: 19px; height: 19px; }
+
+.quick-home-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px; padding: 12px 20px 2px;
+}
+.quick-home-card {
+  border: none; background: var(--card); border-radius: 18px; padding: 14px;
+  display: grid; grid-template-columns: 38px 1fr; column-gap: 10px; row-gap: 2px;
+  align-items: center; text-align: left; font-family: 'Plus Jakarta Sans', sans-serif;
+  box-shadow: 5px 5px 14px var(--shadow-d), -5px -5px 14px var(--shadow-l);
+  color: var(--ink); cursor: pointer; transition: transform 0.12s cubic-bezier(.34,1.56,.64,1), box-shadow 0.12s;
+}
+.quick-home-card:active {
+  transform: scale(0.96);
+  box-shadow: inset 4px 4px 9px var(--shadow-d), inset -4px -4px 9px var(--shadow-l);
+}
+.quick-home-icon {
+  grid-row: 1 / span 2; width: 38px; height: 38px; border-radius: 14px;
+  display: flex; align-items: center; justify-content: center; color: var(--lav-deep);
+  background: var(--bg); box-shadow: inset 3px 3px 7px var(--shadow-d), inset -3px -3px 7px var(--shadow-l);
+}
+.quick-home-icon .tab-svg { width: 22px; height: 22px; }
+.quick-home-card strong { font-size: 14px; font-weight: 800; line-height: 1.1; }
+.quick-home-card small { color: var(--ink-soft); font-size: 10px; font-weight: 700; line-height: 1.15; }
 
 .search-results { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 16px 20px; }
 .poster-pick {
@@ -1973,7 +2440,13 @@ body {
 }
 .accordion-header:active { transform: scale(0.98); }
 .accordion-left { display: flex; align-items: center; gap: 12px; }
-.reco-emoji { font-size: 22px; }
+.accordion-icon {
+  width: 34px; height: 34px; border-radius: 13px; display: flex; align-items: center; justify-content: center;
+  color: var(--lav-deep); background: var(--bg);
+  box-shadow: inset 3px 3px 7px var(--shadow-d), inset -3px -3px 7px var(--shadow-l);
+  flex-shrink: 0;
+}
+.accordion-icon .tab-svg { width: 20px; height: 20px; }
 .accordion-title { font-weight: 800; font-size: 15px; }
 .accordion-sub { font-size: 11px; color: var(--ink-soft); font-weight: 600; margin-top: 1px; }
 .accordion-chevron { font-size: 18px; color: var(--ink-soft); transition: transform 0.25s cubic-bezier(.2,.8,.2,1); }
@@ -2057,6 +2530,12 @@ body {
 .context-divider { height: 1px; background: rgba(0,0,0,0.06); margin: 4px 8px; }
 .context-empty { padding: 12px; color: var(--ink-soft); font-size: 13px; font-weight: 700; text-align: center; }
 .install-title { font-weight: 800; font-size: 18px; padding: 4px 10px 6px; }
+.install-logo {
+  width: 76px; height: 76px; border-radius: 19px; object-fit: cover; display: block; margin: 2px auto 12px;
+  background: rgba(255,255,255,0.78);
+  border: 1px solid rgba(154,147,184,0.18);
+  box-shadow: 0 8px 22px rgba(154,147,184,0.22), 5px 5px 14px var(--shadow-d), -5px -5px 14px var(--shadow-l);
+}
 .install-text { color: var(--ink-soft); font-size: 13px; line-height: 1.55; font-weight: 600; padding: 0 10px 10px; }
 .install-steps { display: flex; flex-direction: column; gap: 8px; padding: 0 4px 10px; }
 .install-step { background: var(--bg); border-radius: 14px; padding: 12px; font-size: 13px; font-weight: 700; color: var(--ink); }
@@ -2100,8 +2579,16 @@ body {
 @keyframes spin { to { transform: rotate(360deg); } }
 .boot-loading {
   min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  flex-direction: column; gap: 16px;
+}
+.boot-logo {
+  width: 88px; height: 88px; border-radius: 23px; object-fit: cover;
+  background: rgba(255,255,255,0.76);
+  border: 1px solid rgba(154,147,184,0.18);
+  box-shadow: 0 10px 28px rgba(154,147,184,0.22), 7px 7px 18px var(--shadow-d), -7px -7px 18px var(--shadow-l);
 }
 .boot-loading .loading-spin { width: 28px; height: 28px; border-width: 3px; }
+
 </style>
 </head>
 <body>
@@ -2127,17 +2614,21 @@ body {
   </div>
 </div>
 
+<div class="context-overlay" id="movie-action-overlay">
+  <div class="context-sheet">
+    <div class="context-handle"></div>
+    <div class="context-preview" id="movie-action-preview"></div>
+    <div id="movie-action-items"></div>
+  </div>
+</div>
+
 <div class="context-overlay" id="install-overlay">
   <div class="context-sheet">
     <div class="context-handle"></div>
-    <div class="install-title">Ajouter Le Top à l'écran d'accueil</div>
-    <div class="install-text">Sur iPhone, Safari demande une action manuelle.</div>
-    <div class="install-steps">
-      <div class="install-step"><span>1</span>Ouvre cette page dans Safari</div>
-      <div class="install-step"><span>2</span>Appuie sur le bouton Partager</div>
-      <div class="install-step"><span>3</span>Choisis "Sur l'écran d'accueil"</div>
-      <div class="install-step"><span>4</span>Appuie sur "Ajouter"</div>
-    </div>
+    <img class="install-logo" src="./letop-icon-192.png" alt="Le Top">
+    <div class="install-title" id="install-title">Installer Le Top</div>
+    <div class="install-text" id="install-text"></div>
+    <div class="install-steps" id="install-steps"></div>
     <button class="btn-primary" id="btn-close-install">OK</button>
   </div>
 </div>

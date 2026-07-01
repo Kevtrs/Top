@@ -1,0 +1,23 @@
+{
+  "name": "Le Top",
+  "short_name": "Le Top",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#F6F4FC",
+  "theme_color": "#F6F4FC",
+  "icons": [
+    {
+      "src": "./letop-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./letop-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
