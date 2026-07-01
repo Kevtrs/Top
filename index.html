@@ -77,6 +77,10 @@ let profilesSynced = false;
 let rankingsSynced = false;
 let profilesServerConfirmed = false;
 let foregroundPushListening = false;
+let installGateSheetShown = false;
+
+const PENDING_PUSH_TOKEN_KEY = "letop_pending_push_token";
+const PUSH_BOUND_KEY = "letop_push_bound";
 
 window.addEventListener("beforeinstallprompt", (event) => {
   event.preventDefault();
@@ -86,9 +90,18 @@ window.addEventListener("beforeinstallprompt", (event) => {
 
 window.addEventListener("appinstalled", () => {
   deferredInstallPrompt = null;
+  installGateSheetShown = false;
   applyPlatformMode();
   const toast = document.getElementById("toast");
   if (toast) showToast("Le Top est installé");
+  renderPage();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && document.getElementById("root")) {
+    applyPlatformMode();
+    renderPage();
+  }
 });
 
 async function saveRankingToCloud(userId, rankedArray) {
@@ -244,6 +257,9 @@ function isIosDevice() {
 function isAndroidDevice() {
   return /Android/i.test(navigator.userAgent);
 }
+function isMobileDevice() {
+  return isIosDevice() || isAndroidDevice();
+}
 function devicePlatform() {
   if (isIosDevice()) return "ios";
   if (isAndroidDevice()) return "android";
@@ -271,6 +287,14 @@ function installButtonTitle() {
 function canUsePushHere() {
   return "serviceWorker" in navigator && "Notification" in window && isHttpsLike();
 }
+function shouldForceInstallGate() {
+  return isMobileDevice() && !isStandaloneApp();
+}
+function shouldForceNotificationGate() {
+  if (!isMobileDevice() || !isStandaloneApp()) return false;
+  if (!isPushConfigured() || !("Notification" in window)) return false;
+  return Notification.permission !== "granted";
+}
 function tokenDocId(token) {
   let hash = 0;
   for (let i = 0; i < token.length; i++) hash = ((hash << 5) - hash + token.charCodeAt(i)) | 0;
@@ -282,6 +306,65 @@ function pushBellIcon() {
 }
 function renderBootLoading() {
   document.getElementById("root").innerHTML = `<div class="boot-loading">${appLogoHtml("boot-logo")}<span class="loading-spin"></span></div>`;
+}
+function renderGateSteps(steps) {
+  return steps.map((step, i) => `<div class="gate-step"><span>${i + 1}</span>${escapeHtml(step)}</div>`).join("");
+}
+function renderInstallGate() {
+  const copy = installSheetCopy();
+  document.getElementById("root").innerHTML = `
+  <div class="gate-screen">
+    ${appLogoHtml("profile-logo-img")}
+    <div class="onboard-step">INSTALLATION</div>
+    <div class="onboard-title">Installe Le Top</div>
+    <div class="onboard-text">${escapeHtml(copy.text)}</div>
+    <div class="gate-steps">${renderGateSteps(copy.steps)}</div>
+    <button class="btn-primary" id="btn-install-gate">${escapeHtml(installButtonTitle())}</button>
+    <button class="btn-secondary" id="btn-install-check">J'ai ajouté l'app</button>
+  </div>`;
+
+  document.getElementById("btn-install-gate").addEventListener("click", openInstallSheet);
+  document.getElementById("btn-install-check").addEventListener("click", () => {
+    applyPlatformMode();
+    if (isStandaloneApp()) {
+      renderPage();
+    } else {
+      openInstallSheet();
+      showToast("Ouvre Le Top depuis l'icône installée");
+    }
+  });
+
+  if (!installGateSheetShown) {
+    installGateSheetShown = true;
+    setTimeout(() => {
+      if (shouldForceInstallGate()) openInstallSheet();
+    }, 250);
+  }
+}
+function renderNotificationGate() {
+  const denied = "Notification" in window && Notification.permission === "denied";
+  document.getElementById("root").innerHTML = `
+  <div class="gate-screen">
+    ${appLogoHtml("profile-logo-img")}
+    <div class="onboard-step">NOTIFICATIONS</div>
+    <div class="onboard-title">Active les notifs</div>
+    <div class="onboard-text">${denied
+      ? "Les notifications sont bloquées dans le navigateur. Réactive-les dans les réglages du site, puis reviens ici."
+      : "Autorise les notifications pour recevoir les films qu'on te recommande. L'app se lance juste après."}</div>
+    <div class="gate-steps">
+      ${renderGateSteps([
+        "Appuie sur Autoriser les notifications",
+        "Accepte la demande du navigateur",
+        "Crée ton profil ou reprends ton espace"
+      ])}
+    </div>
+    <button class="btn-primary" id="btn-notification-gate">${denied ? "Réessayer" : "Autoriser les notifications"}</button>
+  </div>`;
+
+  document.getElementById("btn-notification-gate").addEventListener("click", async () => {
+    const enabled = await enablePushNotifications({ allowWithoutProfile: true });
+    if (enabled) renderPage();
+  });
 }
 function normalizeActiveUsers() {
   if (!profilesServerConfirmed) {
@@ -679,12 +762,18 @@ function renderWatchlistTabContent() {
 }
 
 function renderFriendsTabContent(viewed) {
+  const friends = PROFILES.filter(p => p.id !== currentUser);
+  if (!friends.length) {
+    return `
+      <div class="section-label">Amis</div>
+      <div class="empty-state">Les prochains comptes créés apparaîtront ici automatiquement.</div>`;
+  }
   return `
     <div class="profile-switcher profile-switcher-tab">
-      ${PROFILES.map(p => `
+      ${friends.map(p => `
         <div class="profile-chip ${p.id === viewingUser ? "active" : ""}" data-id="${escapeAttr(p.id)}" style="--pc:${escapeAttr(p.color)}">
           ${profileAvatarHtml(p.id, 22)}
-          <span>${p.id === currentUser ? "Moi" : escapeHtml(p.name)}</span>
+          <span>${escapeHtml(p.name)}</span>
         </div>
       `).join("")}
     </div>
@@ -715,8 +804,15 @@ function renderApp() {
   if (activeTab !== "friends") {
     viewingUser = currentUser;
     viewed = me;
+  } else if (viewingUser === currentUser) {
+    const firstFriend = PROFILES.find(p => p.id !== currentUser);
+    if (firstFriend) {
+      viewingUser = firstFriend.id;
+      viewed = firstFriend;
+    }
   }
   const myIncoming = incomingRecos.filter(r => r.to === currentUser && !r.seen);
+  syncPendingPushTokenForCurrentUser();
 
   document.getElementById("root").innerHTML = `
     <div class="header">
@@ -747,6 +843,15 @@ function renderApp() {
 }
 
 function renderPage() {
+  applyPlatformMode();
+  if (shouldForceInstallGate()) {
+    renderInstallGate();
+    return;
+  }
+  if (shouldForceNotificationGate()) {
+    renderNotificationGate();
+    return;
+  }
   if (!profilesSynced && !creatingProfile && !onboardingNewUser) {
     renderBootLoading();
     return;
@@ -1720,9 +1825,8 @@ async function deleteCurrentAccount() {
   if (!currentUser) return;
   const userId = currentUser;
   const me = profileById(userId) || fallbackProfile(userId);
-  const typed = prompt(`Pour supprimer ${me.name}, tape exactement son prénom :`);
-  if (typed !== me.name) {
-    if (typed !== null) showToast("Suppression annulée");
+  if (!confirm(`Supprimer le compte ${me.name} ? Tout son Top, ses films vus, sa liste À voir et ses recos seront supprimés.`)) {
+    showToast("Suppression annulée");
     return;
   }
   try {
@@ -1732,6 +1836,7 @@ async function deleteCurrentAccount() {
       deleteDoc(doc(db, "watched", userId)),
       deleteDoc(doc(db, "watchlist", userId)),
       deleteDocsFrom(collection(db, "pushTokens", userId, "tokens")),
+      deleteDoc(doc(db, "pushTokens", userId)),
       deleteUserRecos(userId)
     ]);
     PROFILES = PROFILES.filter(p => p.id !== userId);
@@ -1806,59 +1911,83 @@ async function setupForegroundPushListener() {
     foregroundPushListening = true;
   } catch (e) {}
 }
-async function enablePushNotifications() {
-  if (!currentUser) {
+async function getPushRegistrationToken() {
+  if (!(await isMessagingSupported())) throw new Error("unsupported");
+  const registration = await navigator.serviceWorker.register("./firebase-messaging-sw.js");
+  const messaging = getMessaging(app);
+  return await getToken(messaging, {
+    vapidKey: FCM_VAPID_KEY,
+    serviceWorkerRegistration: registration
+  });
+}
+async function savePushTokenForProfile(profileId, token) {
+  if (!profileId || !token) return;
+  const now = Date.now();
+  await setDoc(doc(db, "pushTokens", profileId, "tokens", tokenDocId(token)), {
+    token,
+    profileId,
+    userAgent: navigator.userAgent,
+    platform: navigator.platform || "",
+    updatedAt: now,
+    createdAt: now
+  }, { merge: true });
+  localStorage.setItem(PUSH_BOUND_KEY, `${profileId}:${tokenDocId(token)}`);
+}
+async function syncPendingPushTokenForCurrentUser() {
+  if (!currentUser || !isPushConfigured() || !canUsePushHere()) return;
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  let token = localStorage.getItem(PENDING_PUSH_TOKEN_KEY);
+  try {
+    if (!token) {
+      token = await getPushRegistrationToken();
+      if (token) localStorage.setItem(PENDING_PUSH_TOKEN_KEY, token);
+    }
+    if (!token) return;
+    const boundKey = `${currentUser}:${tokenDocId(token)}`;
+    if (localStorage.getItem(PUSH_BOUND_KEY) === boundKey) return;
+    await savePushTokenForProfile(currentUser, token);
+  } catch (e) {}
+}
+async function enablePushNotifications(options = {}) {
+  const allowWithoutProfile = options.allowWithoutProfile === true;
+  if (!currentUser && !allowWithoutProfile) {
     showToast("Choisis d'abord ton profil");
-    return;
+    return false;
   }
   if (!isPushConfigured()) {
     showToast("Ajoute d'abord la clé VAPID dans le code");
-    return;
+    return false;
   }
   if (!canUsePushHere()) {
     showToast("Les notifications demandent HTTPS");
-    return;
+    return false;
   }
   if (isIosDevice() && !isStandaloneApp()) {
     openInstallSheet();
     showToast("Sur iPhone, ouvre l'app depuis l'écran d'accueil");
-    return;
+    return false;
   }
   try {
-    if (!(await isMessagingSupported())) {
-      showToast("Notifications non compatibles ici");
-      return;
-    }
     const permission = await Notification.requestPermission();
     if (permission !== "granted") {
       showToast("Notifications refusées");
       renderPage();
-      return;
+      return false;
     }
-    const registration = await navigator.serviceWorker.register("./firebase-messaging-sw.js");
-    const messaging = getMessaging(app);
-    const token = await getToken(messaging, {
-      vapidKey: FCM_VAPID_KEY,
-      serviceWorkerRegistration: registration
-    });
+    const token = await getPushRegistrationToken();
     if (!token) {
       showToast("Impossible d'activer les notifs");
-      return;
+      return false;
     }
-    const now = Date.now();
-    await setDoc(doc(db, "pushTokens", currentUser, "tokens", tokenDocId(token)), {
-      token,
-      profileId: currentUser,
-      userAgent: navigator.userAgent,
-      platform: navigator.platform || "",
-      updatedAt: now,
-      createdAt: now
-    }, { merge: true });
+    localStorage.setItem(PENDING_PUSH_TOKEN_KEY, token);
+    if (currentUser) await savePushTokenForProfile(currentUser, token);
     await setupForegroundPushListener();
     showToast("Notifications activées 🔔");
     renderPage();
+    return true;
   } catch (e) {
-    showToast("Erreur notifications");
+    showToast(e.message === "unsupported" ? "Notifications non compatibles ici" : "Erreur notifications");
+    return false;
   }
 }
 function installSheetCopy() {
@@ -1871,7 +2000,7 @@ function installSheetCopy() {
         "Ouvre cette page dans Safari",
         "Appuie sur le bouton Partager",
         "Choisis \"Sur l'écran d'accueil\"",
-        "Ouvre Le Top depuis l'icône, puis appuie sur la cloche"
+        "Ouvre Le Top depuis l'icône, puis accepte les notifications"
       ]
     };
   }
@@ -1883,7 +2012,7 @@ function installSheetCopy() {
         deferredInstallPrompt ? "Appuie sur Installer quand Android le propose" : "Ouvre cette page dans Chrome",
         deferredInstallPrompt ? "Confirme l'installation" : "Appuie sur le menu ⋮",
         deferredInstallPrompt ? "Ouvre Le Top depuis l'icône" : "Choisis \"Installer l'application\" ou \"Ajouter à l'écran d'accueil\"",
-        "Appuie sur la cloche pour autoriser les notifications"
+        "Accepte les notifications au lancement"
       ]
     };
   }
@@ -1894,7 +2023,7 @@ function installSheetCopy() {
       "Ouvre cette page dans Chrome ou Edge",
       "Clique sur l'icône Installer dans la barre d'adresse, ou dans le menu",
       "Confirme l'installation",
-      "Appuie sur la cloche pour autoriser les notifications"
+      "Accepte les notifications au lancement"
     ]
   };
 }
@@ -2129,7 +2258,7 @@ document.addEventListener("DOMContentLoaded", () => {
   setupPwaInstallMetadata();
   setupForegroundPushListener();
   renderInstallSheetContent();
-  renderBootLoading();
+  renderPage();
 
   setTimeout(() => {
     if (!profilesSynced || (currentUser && !rankingsSynced)) {
@@ -2329,6 +2458,23 @@ body {
 .onboard-title { font-weight: 800; font-size: 26px; margin-bottom: 10px; }
 .onboard-text { font-size: 14px; color: var(--ink-soft); font-weight: 500; line-height: 1.6; }
 .onboard-text strong { color: var(--ink); }
+.gate-screen {
+  min-height: 100vh; padding: 58px 24px calc(env(safe-area-inset-bottom, 24px) + 24px);
+  display: flex; flex-direction: column; justify-content: center;
+}
+.gate-screen .profile-logo-img { display: block; margin: 0 auto 22px; }
+.gate-steps {
+  display: flex; flex-direction: column; gap: 10px; margin: 20px 0 18px;
+}
+.gate-step {
+  background: rgba(255,255,255,0.78); border-radius: 18px; padding: 14px;
+  font-size: 13px; font-weight: 800; color: var(--ink);
+  box-shadow: 5px 5px 14px var(--shadow-d), -5px -5px 14px var(--shadow-l);
+}
+.gate-step span {
+  display: inline-flex; width: 26px; height: 26px; align-items: center; justify-content: center;
+  margin-right: 9px; border-radius: 50%; background: var(--lav); color: white; font-size: 12px;
+}
 
 /* ═══════════════ AVATAR HELPERS ═══════════════ */
 .avatar-poster { border-radius: 50%; object-fit: cover; display: inline-block; vertical-align: middle; }
