@@ -82,6 +82,8 @@ let scrollLockFrame = null;
 
 const PENDING_PUSH_TOKEN_KEY = "letop_pending_push_token";
 const PUSH_BOUND_KEY = "letop_push_bound";
+const USER_NAME_KEY = "letop_user_name";
+const repairingProfileIds = new Set();
 
 window.addEventListener("beforeinstallprompt", (event) => {
   event.preventDefault();
@@ -107,16 +109,19 @@ document.addEventListener("visibilitychange", () => {
 
 async function saveRankingToCloud(userId, rankedArray) {
   if (!userId) return;
+  if (userId === currentUser && !profileById(userId)) await ensureProfileInCloud(userId);
   allRankings = { ...allRankings, [userId]: rankedArray };
   await setDoc(doc(db, "rankings", userId), { movies: rankedArray, updatedAt: Date.now() });
 }
 async function saveWatchedToCloud(userId, watchedArray) {
   if (!userId) return;
+  if (userId === currentUser && !profileById(userId)) await ensureProfileInCloud(userId);
   allWatched = { ...allWatched, [userId]: watchedArray };
   await setDoc(doc(db, "watched", userId), { movies: watchedArray, updatedAt: Date.now() });
 }
 async function saveWatchlistToCloud(userId, watchlistArray) {
   if (!userId) return;
+  if (userId === currentUser && !profileById(userId)) await ensureProfileInCloud(userId);
   allWatchlist = { ...allWatchlist, [userId]: watchlistArray };
   await setDoc(doc(db, "watchlist", userId), { movies: watchlistArray, updatedAt: Date.now() });
 }
@@ -152,12 +157,40 @@ function slugify(name) {
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // enlève les accents
     .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
+function profileNameFromId(profileId) {
+  return String(profileId || "Profil")
+    .split("-")
+    .filter(Boolean)
+    .map(part => part[0]?.toUpperCase() + part.slice(1))
+    .join(" ") || "Profil";
+}
 async function createProfile(id, name) {
   const color = PROFILE_COLORS[PROFILES.length % PROFILE_COLORS.length];
   await setDoc(doc(db, "profiles", id), {
     id, name, initial: name.trim()[0]?.toUpperCase() || "?",
     color, createdAt: Date.now()
-  });
+  }, { merge: true });
+}
+async function ensureProfileInCloud(userId, preferredName = "") {
+  if (!userId || profileById(userId) || repairingProfileIds.has(userId)) return;
+  repairingProfileIds.add(userId);
+  const storedName = localStorage.getItem(USER_NAME_KEY) || "";
+  const name = (preferredName || storedName || profileNameFromId(userId)).trim();
+  const color = PROFILE_COLORS[Math.max(PROFILES.length, 0) % PROFILE_COLORS.length];
+  try {
+    await setDoc(doc(db, "profiles", userId), {
+      id: userId,
+      name,
+      initial: name[0]?.toUpperCase() || "?",
+      color,
+      createdAt: Date.now(),
+      repairedAt: Date.now()
+    }, { merge: true });
+  } catch (e) {
+    showToast("Profil pas encore synchronisé");
+  } finally {
+    repairingProfileIds.delete(userId);
+  }
 }
 function listenProfiles(cb) {
   return onSnapshot(collection(db, "profiles"), { includeMetadataChanges: true }, snap => {
@@ -433,9 +466,8 @@ function normalizeActiveUsers() {
     return;
   }
   if (currentUser && !hasProfile(currentUser)) {
-    currentUser = null;
-    viewingUser = null;
-    localStorage.removeItem("letop_user");
+    ensureProfileInCloud(currentUser);
+    if (!viewingUser) viewingUser = currentUser;
     return;
   }
   if (currentUser && !viewingUser) viewingUser = currentUser;
@@ -619,6 +651,7 @@ function renderCreateProfileScreen(canCancel = false) {
     localStorage.setItem("letop_user", id);
 
     if (existingProfile) {
+      localStorage.setItem(USER_NAME_KEY, existingProfile.name);
       const hasMovies = (allRankings[id] || []).length > 0;
       onboardingNewUser = hasMovies ? null : id;
       showToast(`Bon retour ${existingProfile.name}`);
@@ -631,6 +664,7 @@ function renderCreateProfileScreen(canCancel = false) {
     }
 
     onboardingNewUser = id;
+    localStorage.setItem(USER_NAME_KEY, name);
     try {
       await createProfile(id, name);
       renderOnboarding();
@@ -640,6 +674,7 @@ function renderCreateProfileScreen(canCancel = false) {
       currentUser = null;
       viewingUser = null;
       localStorage.removeItem("letop_user");
+      localStorage.removeItem(USER_NAME_KEY);
       showToast("Erreur de création du profil");
       renderCreateProfileScreen();
     }
@@ -706,6 +741,7 @@ function renderOnboarding() {
             const userId = onboardingNewUser;
             onboardingNewUser = null;
             try {
+              await ensureProfileInCloud(userId, me.name);
               await saveRankingToCloud(userId, [movie]);
               showToast(`Bienvenue ${me.name} 🎬`);
             } catch (e) {
@@ -827,7 +863,7 @@ function renderFriendsTabContent(viewed) {
   if (!friends.length) {
     return `
       <div class="section-label">Amis</div>
-      <div class="empty-state">Les prochains comptes créés apparaîtront ici automatiquement.</div>`;
+      <div class="empty-state">Aucun autre compte synchronisé pour l'instant. Ouvre Le Top sur l'autre appareil avec la dernière version pour qu'il publie son profil.</div>`;
   }
   return `
     <div class="section-label">Famille</div>
@@ -855,12 +891,13 @@ function renderActiveTabContent(viewed, myIncoming) {
 }
 
 function renderApp() {
-  const me = profileById(currentUser) || (!profilesServerConfirmed && currentUser ? fallbackProfile(currentUser) : null);
+  const me = profileById(currentUser) || (currentUser ? fallbackProfile(currentUser) : null);
   if (!me) {
     normalizeActiveUsers();
     renderProfilePicker();
     return;
   }
+  if (currentUser && !profileById(currentUser)) ensureProfileInCloud(currentUser, me.name);
   let viewed = profileById(viewingUser) || (!profilesServerConfirmed && viewingUser ? fallbackProfile(viewingUser) : null);
   if (!viewed && activeTab === "friends") {
     viewed = friendProfiles().find(p => p.id === viewingUser) || null;
@@ -1873,6 +1910,7 @@ function logoutCurrentUser() {
   creatingProfile = false;
   activeTab = "search";
   localStorage.removeItem("letop_user");
+  localStorage.removeItem(USER_NAME_KEY);
   closeSettingsSheet();
   showToast("Déconnecté");
   renderPage();
@@ -1909,6 +1947,7 @@ async function deleteCurrentAccount() {
   creatingProfile = false;
   activeTab = "search";
   localStorage.removeItem("letop_user");
+  localStorage.removeItem(USER_NAME_KEY);
   localStorage.removeItem(PUSH_BOUND_KEY);
   closeSettingsSheet();
   showToast("Compte supprimé");
@@ -2431,6 +2470,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     profilesSynced = true;
+    if (currentUser && serverConfirmed && !list.some(p => p.id === currentUser)) {
+      ensureProfileInCloud(currentUser);
+    }
     if (!onboardingNewUser && serverConfirmed) normalizeActiveUsers();
     if (currentUser && !viewingUser) viewingUser = currentUser;
     renderPage();
