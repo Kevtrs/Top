@@ -979,7 +979,6 @@ function renderFriendsTabContent(viewed) {
       </div>`;
   }
   return `
-    <div class="section-label">Famille</div>
     <div class="friend-grid">
       ${friends.map(p => `
         <button class="friend-card ${p.id === viewingUser ? "active" : ""}" data-id="${escapeAttr(p.id)}" style="--pc:${escapeAttr(p.color)}" type="button">
