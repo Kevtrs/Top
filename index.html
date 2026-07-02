@@ -11,7 +11,7 @@
 <title>Le Top 🍿</title>
 <link rel="apple-touch-icon" href="./apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="64x64" href="./favicon.png">
-<link rel="manifest" href="./site.webmanifest?v=20260701-firestore-reconnect">
+<link rel="manifest" href="./site.webmanifest?v=20260702-reco-actions">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -38,7 +38,7 @@ const PROFILE_COLORS = [
 const TMDB_IMG = "https://image.tmdb.org/t/p/w342";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260702-push-polish";
+const PWA_VERSION = "20260702-reco-actions";
 
 const APP_TABS = [
   { id: "search", label: "Recherche", icon: "search", color: "var(--lav)" },
@@ -64,6 +64,7 @@ let activeContextIndex = null;
 let touchDragState = null;
 let pendingRatingMovie = null;
 let pendingRatingOrigin = null;
+let pendingRatingRecoDoc = null;
 let pendingActionMovie = null;
 let pendingActionOrigin = null;
 let pendingActionIndex = null;
@@ -371,6 +372,31 @@ async function markRecoSeen(docId) {
 }
 async function dismissReco(docId) {
   await deleteDoc(doc(db, "sentRecos", docId));
+}
+function removeRecoLocally(docId) {
+  incomingRecos = incomingRecos.filter(r => r.docId !== docId);
+}
+async function completeReco(docId, toastText = "") {
+  if (!docId) return;
+  removeRecoLocally(docId);
+  renderPage();
+  try {
+    await dismissReco(docId);
+    if (toastText) showToast(toastText);
+  } catch (e) {
+    showToast("Erreur reco");
+  }
+}
+function handleRecoBannerAction(action, docId, movie) {
+  if (!docId || !movie) return;
+  if (action === "watchlist") {
+    addToWatchlist(movie);
+    completeReco(docId);
+  } else if (action === "watched") {
+    openRatingSheet(movie, "reco", docId);
+  } else if (action === "ignore") {
+    completeReco(docId, "Reco ignorée");
+  }
 }
 
 async function tmdbFetch(path, params = {}) {
@@ -923,11 +949,17 @@ function renderIncomingRecosHtml(myIncoming) {
       return `
       <div class="reco-banner" data-doc="${escapeAttr(r.docId)}" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(r.movie)))}'>
         ${poster ? `<img class="reco-banner-poster" src="${poster}" alt="">` : `<div class="reco-banner-poster" style="background:#E8E4F5"></div>`}
-        <div class="reco-banner-text">
-          <strong>${escapeHtml(fromProfile?.name || "Quelqu'un")}</strong> te recommande
-          <div class="reco-banner-title">${escapeHtml(r.movie.title)}</div>
+        <div class="reco-banner-body">
+          <div class="reco-banner-text">
+            <strong>${escapeHtml(fromProfile?.name || "Quelqu'un")}</strong> te recommande
+            <div class="reco-banner-title">${escapeHtml(r.movie.title)}</div>
+          </div>
+          <div class="reco-banner-actions">
+            <button class="reco-banner-action" data-action="watchlist" type="button">À voir</button>
+            <button class="reco-banner-action" data-action="watched" type="button">Vu</button>
+            <button class="reco-banner-action soft" data-action="ignore" type="button">Ignorer</button>
+          </div>
         </div>
-        <button class="reco-banner-dismiss" data-doc="${escapeAttr(r.docId)}">✕</button>
       </div>`;
     }).join("")}
   </div>`;
@@ -1099,10 +1131,6 @@ function renderApp() {
   attachAppEvents();
   renderActiveTabView();
 
-  // Marque les recos comme vues après un court délai (le temps qu'on les voie vraiment)
-  if (activeTab === "search" && myIncoming.length) {
-    setTimeout(() => myIncoming.forEach(r => markRecoSeen(r.docId).catch(() => {})), 2000);
-  }
 }
 
 function renderPage() {
@@ -1238,10 +1266,11 @@ function attachAppEvents() {
     });
   });
 
-  document.querySelectorAll(".reco-banner-dismiss").forEach(btn => {
+  document.querySelectorAll(".reco-banner-action").forEach(btn => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      dismissReco(btn.dataset.doc).catch(() => showToast("Erreur"));
+      const banner = btn.closest(".reco-banner");
+      handleRecoBannerAction(btn.dataset.action, banner?.dataset.doc, JSON.parse(banner?.dataset.movie || "null"));
     });
   });
   document.querySelectorAll(".reco-banner").forEach(el => {
@@ -1451,9 +1480,10 @@ function addToRanked(movie) {
   showToast(`${movie.title} ajouté en position ${updated.length}`);
 }
 
-function openRatingSheet(movie, origin = null) {
+function openRatingSheet(movie, origin = null, recoDocId = null) {
   pendingRatingMovie = movie;
   pendingRatingOrigin = origin;
+  pendingRatingRecoDoc = recoDocId;
   const poster = movie.poster_path ? TMDB_IMG + movie.poster_path : "";
   document.getElementById("rating-preview").innerHTML = `
     ${poster ? `<img src="${poster}" alt="">` : ""}
@@ -1471,6 +1501,7 @@ function openRatingSheet(movie, origin = null) {
     btn.addEventListener("click", () => {
       addToWatched(pendingRatingMovie, parseInt(btn.dataset.rating));
       if (pendingRatingOrigin === "watchlist") removeFromWatchlist(pendingRatingMovie.id);
+      if (pendingRatingOrigin === "reco" && pendingRatingRecoDoc) completeReco(pendingRatingRecoDoc);
       closeRatingSheet();
     });
   });
@@ -1480,6 +1511,7 @@ function closeRatingSheet() {
   document.getElementById("rating-overlay").classList.remove("show");
   pendingRatingMovie = null;
   pendingRatingOrigin = null;
+  pendingRatingRecoDoc = null;
 }
 
 function addToWatched(movie, rating) {
@@ -2820,11 +2852,18 @@ body.no-page-scroll #root {
 }
 @keyframes banner-in { from { opacity:0; transform: translateY(-10px) scale(0.95); } to { opacity:1; transform: translateY(0) scale(1); } }
 .reco-banner-poster { width: 40px; aspect-ratio: 2/3; object-fit: cover; border-radius: 8px; }
+.reco-banner-body { flex: 1; min-width: 0; }
 .reco-banner-text { flex: 1; font-size: 12px; font-weight: 600; color: rgba(45,42,61,0.8); }
 .reco-banner-title { font-weight: 800; font-size: 14px; color: var(--ink); margin-top: 2px; }
-.reco-banner-dismiss {
-  background: rgba(255,255,255,0.5); border: none; width: 26px; height: 26px; border-radius: 50%;
-  font-size: 12px; color: var(--ink); cursor: pointer; flex-shrink: 0;
+.reco-banner-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+.reco-banner-action {
+  border: none; border-radius: 999px; padding: 7px 10px;
+  background: rgba(255,255,255,0.62); color: var(--ink);
+  font-family: 'Plus Jakarta Sans', sans-serif; font-size: 11px; font-weight: 800;
+  box-shadow: 2px 2px 6px rgba(122,90,31,0.14), -2px -2px 6px rgba(255,255,255,0.34);
+}
+.reco-banner-action.soft {
+  background: rgba(255,255,255,0.34); color: rgba(45,42,61,0.7);
 }
 
 /* ═══════════════ RECOMMEND BUTTONS ═══════════════ */
