@@ -23,6 +23,7 @@ messaging.onBackgroundMessage(async (payload) => {
 
   const data = payload.data || {};
   const title = data.movieTitle || data.title || "Le Top 🍿";
+  const posterUrl = data.posterUrl || data.image || "";
   const options = {
     body: data.body || data.message || (data.fromName ? `🍿 ${data.fromName} te recommande ça` : "Nouvelle recommandation reçue"),
     icon: ICON_URL,
@@ -31,6 +32,7 @@ messaging.onBackgroundMessage(async (payload) => {
     renotify: true,
     data: { url: data.url || DEFAULT_URL }
   };
+  if (posterUrl) options.image = posterUrl;
 
   const notifications = await self.registration.getNotifications({ tag: "letop-reco" });
   notifications.forEach(notification => notification.close());

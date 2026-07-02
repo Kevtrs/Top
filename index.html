@@ -9,9 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Le Top 🍿</title>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260702-movie-title-push">
-<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260702-movie-title-push">
-<link rel="manifest" href="./site.webmanifest?v=20260702-movie-title-push">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260702-poster-push">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260702-poster-push">
+<link rel="manifest" href="./site.webmanifest?v=20260702-poster-push">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -38,7 +38,7 @@ const PROFILE_COLORS = [
 const TMDB_IMG = "https://image.tmdb.org/t/p/w342";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260702-movie-title-push";
+const PWA_VERSION = "20260702-poster-push";
 
 const APP_TABS = [
   { id: "search", label: "Recherche", icon: "search", color: "var(--lav)" },
@@ -313,7 +313,9 @@ function listenProfileIndex(cb) {
 }
 
 // ─── RECOMMANDATIONS ENTRE PROFILS ─────────────────────────────────
-async function sendPushViaWorker(fcmToken, fromName, movieTitle) {
+async function sendPushViaWorker(fcmToken, fromName, movie) {
+  const movieTitle = movie?.title || "Un film";
+  const posterUrl = movie?.poster_path ? `${TMDB_IMG}${movie.poster_path}` : "";
   const title = movieTitle;
   const message = `🍿 ${fromName} te recommande ça`;
   try {
@@ -324,10 +326,13 @@ async function sendPushViaWorker(fcmToken, fromName, movieTitle) {
         token: fcmToken,
         title,
         message,
+        image: posterUrl,
         data: {
           type: "reco",
           movieTitle,
           fromName,
+          posterUrl,
+          image: posterUrl,
           url: "https://kevtrs.github.io/Top/",
           title,
           body: message,
@@ -357,7 +362,7 @@ async function sendRecoToUser(toUserId, movie) {
   try {
     const tokenSnap = await getDocs(collection(db, "pushTokens", toUserId, "tokens"));
     const tokens = tokenSnap.docs.map(d => d.data().token).filter(Boolean);
-    const results = await Promise.all(tokens.map(token => sendPushViaWorker(token, fromName, movie.title)));
+    const results = await Promise.all(tokens.map(token => sendPushViaWorker(token, fromName, movie)));
     return {
       recoId,
       tokenCount: tokens.length,
@@ -3352,7 +3357,7 @@ body.no-page-scroll #root {
 <div class="context-overlay" id="install-overlay">
   <div class="context-sheet">
     <div class="context-handle"></div>
-    <img class="install-logo" src="./letop-icon-192.png?v=20260702-movie-title-push" alt="Le Top">
+    <img class="install-logo" src="./letop-icon-192.png?v=20260702-poster-push" alt="Le Top">
     <div class="install-title" id="install-title">Installer Le Top</div>
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
