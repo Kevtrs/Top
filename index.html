@@ -1584,7 +1584,7 @@ async function loadMovieActionDetails(movie) {
   try {
     const details = await getMovieDetails(movie.id);
     if (!document.body.contains(zone) || pendingActionMovie?.id !== movie.id) return;
-    const overview = details.overview || movie.overview || "Pas de synopsis disponible pour ce film.";
+    const overview = details.overview || "Pas de synopsis disponible en français pour ce film.";
     const trailer = bestTrailerFromDetails(details);
     const url = trailerUrl(trailer);
     zone.innerHTML = `
@@ -1599,12 +1599,11 @@ async function loadMovieActionDetails(movie) {
     });
   } catch (e) {
     if (!document.body.contains(zone) || pendingActionMovie?.id !== movie.id) return;
-    const overview = movie.overview || "";
-    zone.innerHTML = overview ? `
+    zone.innerHTML = `
       <div class="movie-detail-box">
         <div class="movie-detail-label">Synopsis</div>
-        <p>${escapeHtml(overview)}</p>
-      </div>` : "";
+        <p>Pas de synopsis disponible en français pour ce film.</p>
+      </div>`;
   }
 }
 
