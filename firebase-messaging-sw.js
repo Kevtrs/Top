@@ -14,21 +14,27 @@ firebase.initializeApp(FIREBASE_CONFIG);
 
 const messaging = firebase.messaging();
 const DEFAULT_URL = "https://kevtrs.github.io/Top/";
-const ICON_URL = "./letop-icon-192.png";
+const ICON_URL = "/Top/letop-icon-192.png";
 
-messaging.onBackgroundMessage((payload) => {
+messaging.onBackgroundMessage(async (payload) => {
+  // FCM affiche déjà automatiquement les messages qui contiennent un payload
+  // notification. Les ré-afficher ici crée 2 notifications sur iOS.
+  if (payload.notification) return;
+
   const data = payload.data || {};
-  const title = data.title || payload.notification?.title || "Le Top 🍿";
+  const title = data.title || "Le Top 🍿";
   const options = {
-    body: data.body || data.message || payload.notification?.body || "Nouvelle recommandation reçue",
+    body: data.body || data.message || "Nouvelle recommandation reçue",
     icon: ICON_URL,
     badge: ICON_URL,
-    tag: data.tag || "letop-reco",
+    tag: "letop-reco",
     renotify: true,
     data: { url: data.url || DEFAULT_URL }
   };
 
-  self.registration.showNotification(title, options);
+  const notifications = await self.registration.getNotifications({ tag: "letop-reco" });
+  notifications.forEach(notification => notification.close());
+  await self.registration.showNotification(title, options);
 });
 
 self.addEventListener("notificationclick", (event) => {
