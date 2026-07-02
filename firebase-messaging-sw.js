@@ -22,9 +22,9 @@ messaging.onBackgroundMessage(async (payload) => {
   if (payload.notification) return;
 
   const data = payload.data || {};
-  const title = data.title || "Le Top 🍿";
+  const title = data.movieTitle || data.title || "Le Top 🍿";
   const options = {
-    body: data.body || data.message || "Nouvelle recommandation reçue",
+    body: data.body || data.message || (data.fromName ? `🍿 ${data.fromName} te recommande ça` : "Nouvelle recommandation reçue"),
     icon: ICON_URL,
     badge: ICON_URL,
     tag: "letop-reco",
