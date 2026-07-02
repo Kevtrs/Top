@@ -18,12 +18,12 @@ const ICON_URL = "./letop-icon-192.png";
 
 messaging.onBackgroundMessage((payload) => {
   const data = payload.data || {};
-  const title = data.title || "Le Top";
+  const title = data.title || payload.notification?.title || "Le Top 🍿";
   const options = {
-    body: data.body || "Nouvelle recommandation recue",
+    body: data.body || data.message || payload.notification?.body || "Nouvelle recommandation reçue",
     icon: ICON_URL,
     badge: ICON_URL,
-    tag: data.tag || data.recoId || "letop-reco",
+    tag: data.tag || "letop-reco",
     renotify: true,
     data: { url: data.url || DEFAULT_URL }
   };
