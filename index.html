@@ -9,9 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Le Top 🍿</title>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260702-movie-details">
-<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260702-movie-details">
-<link rel="manifest" href="./site.webmanifest?v=20260702-movie-details">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260702-install-flow">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260702-install-flow">
+<link rel="manifest" href="./site.webmanifest?v=20260702-install-flow">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -38,7 +38,8 @@ const PROFILE_COLORS = [
 const TMDB_IMG = "https://image.tmdb.org/t/p/w342";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260702-movie-details";
+const PWA_VERSION = "20260702-install-flow";
+const APP_PUBLIC_URL = "https://kevtrs.github.io/Top/";
 
 const APP_TABS = [
   { id: "search", label: "Recherche", icon: "search", color: "var(--lav)" },
@@ -333,7 +334,7 @@ async function sendPushViaWorker(fcmToken, fromName, movie) {
           fromName,
           posterUrl,
           image: posterUrl,
-          url: "https://kevtrs.github.io/Top/",
+          url: APP_PUBLIC_URL,
           title,
           body: message,
           message
@@ -518,6 +519,9 @@ function isHttpsLike() {
 function isIosDevice() {
   return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
+function isIosChrome() {
+  return isIosDevice() && /CriOS/i.test(navigator.userAgent);
+}
 function isAndroidDevice() {
   return /Android/i.test(navigator.userAgent);
 }
@@ -539,11 +543,12 @@ function applyPlatformMode() {
   document.documentElement.classList.toggle("is-standalone", isStandaloneApp());
 }
 function installButtonLabel() {
-  if (isIosDevice()) return "📲 Ajouter à l'écran d'accueil";
-  if (isAndroidDevice()) return "📲 Installer l'app";
-  return "📲 Installer";
+  if (isIosDevice()) return "Ajouter à l'écran d'accueil";
+  if (isAndroidDevice()) return "Installer l'app";
+  return "Installer";
 }
 function installButtonTitle() {
+  if (isIosChrome()) return "Voir l'installation iPhone";
   if (isIosDevice()) return "Ajouter à l'écran d'accueil";
   if (isAndroidDevice()) return "Installer l'app Android";
   return "Installer l'app";
@@ -598,6 +603,62 @@ function canTouchScrollInside(target) {
   if (!scrollable) return false;
   return scrollable.scrollHeight > scrollable.clientHeight || scrollable.scrollWidth > scrollable.clientWidth;
 }
+function canShareAppLink() {
+  return typeof navigator.share === "function";
+}
+async function copyAppLink() {
+  try {
+    await navigator.clipboard.writeText(APP_PUBLIC_URL);
+    showToast("Lien copié");
+    return true;
+  } catch (e) {
+    try {
+      const input = document.createElement("input");
+      input.value = APP_PUBLIC_URL;
+      input.setAttribute("readonly", "");
+      input.style.position = "fixed";
+      input.style.opacity = "0";
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand("copy");
+      input.remove();
+      showToast("Lien copié");
+      return true;
+    } catch (fallbackError) {
+      showToast(APP_PUBLIC_URL);
+      return false;
+    }
+  }
+}
+async function shareAppLink() {
+  if (!canShareAppLink()) {
+    await copyAppLink();
+    return;
+  }
+  try {
+    await navigator.share({
+      title: "Le Top",
+      text: "Installe Le Top sur ton écran d'accueil",
+      url: APP_PUBLIC_URL
+    });
+  } catch (e) {
+    if (e.name !== "AbortError") await copyAppLink();
+  }
+}
+function renderInstallSupportActions(prefix) {
+  return `
+    <div class="install-actions">
+      ${canShareAppLink() ? `<button class="btn-secondary install-action-btn" id="${prefix}-share">Partager le lien</button>` : ""}
+      <button class="btn-secondary install-action-btn" id="${prefix}-copy">Copier le lien</button>
+    </div>
+  `;
+}
+function bindInstallSupportActions(prefix) {
+  const shareButton = document.getElementById(`${prefix}-share`);
+  const copyButton = document.getElementById(`${prefix}-copy`);
+  if (shareButton) shareButton.addEventListener("click", shareAppLink);
+  if (copyButton) copyButton.addEventListener("click", copyAppLink);
+}
 function renderGateSteps(steps) {
   return steps.map((step, i) => `<div class="gate-step"><span>${i + 1}</span>${escapeHtml(step)}</div>`).join("");
 }
@@ -610,11 +671,13 @@ function renderInstallGate() {
     <div class="onboard-title">Installe Le Top</div>
     <div class="onboard-text">${escapeHtml(copy.text)}</div>
     <div class="gate-steps">${renderGateSteps(copy.steps)}</div>
-    <button class="btn-primary" id="btn-install-gate">${escapeHtml(installButtonTitle())}</button>
+    <button class="btn-primary" id="btn-install-gate">${escapeHtml(copy.primaryLabel || installButtonTitle())}</button>
+    ${renderInstallSupportActions("install-gate")}
     <button class="btn-secondary" id="btn-install-check">J'ai ajouté l'app</button>
   </div>`;
 
   document.getElementById("btn-install-gate").addEventListener("click", openInstallSheet);
+  bindInstallSupportActions("install-gate");
   document.getElementById("btn-install-check").addEventListener("click", () => {
     applyPlatformMode();
     if (isStandaloneApp()) {
@@ -2371,13 +2434,27 @@ async function enablePushNotifications(options = {}) {
 function installSheetCopy() {
   const platform = devicePlatform();
   if (platform === "ios") {
+    if (isIosChrome()) {
+      return {
+        title: "Installer depuis Chrome iPhone",
+        text: "iOS ne permet pas à Le Top d'ouvrir Safari ou de s'installer tout seul. Dans Chrome, utilise le partage. Si l'option manque, copie le lien puis ouvre-le dans Safari.",
+        primaryLabel: "Voir les étapes",
+        steps: [
+          "Appuie sur le bouton Partager de Chrome",
+          "Choisis Ajouter à l'écran d'accueil",
+          "Valide avec Ajouter",
+          "Ouvre Le Top depuis l'icône, puis accepte les notifications"
+        ]
+      };
+    }
     return {
-      title: "Ajouter Le Top à l'écran d'accueil",
-      text: "Sur iPhone, les notifications marchent après avoir ajouté l'app à l'écran d'accueil puis ouvert Le Top depuis son icône.",
+      title: "Installer sur iPhone",
+      text: "Dans Safari, ajoute Le Top à l'écran d'accueil. Les notifications marchent ensuite quand tu ouvres l'app depuis sa vraie icône.",
+      primaryLabel: "Voir les étapes",
       steps: [
-        "Ouvre cette page dans Safari",
-        "Appuie sur le bouton Partager",
-        "Choisis \"Sur l'écran d'accueil\"",
+        "Appuie sur le bouton Partager de Safari",
+        "Choisis Ajouter à l'écran d'accueil",
+        "Valide avec Ajouter",
         "Ouvre Le Top depuis l'icône, puis accepte les notifications"
       ]
     };
@@ -2386,6 +2463,7 @@ function installSheetCopy() {
     return {
       title: "Installer Le Top sur Android",
       text: "Sur Android, Chrome peut installer Le Top comme une vraie app. Les notifications peuvent ensuite être activées avec la cloche.",
+      primaryLabel: deferredInstallPrompt ? "Installer maintenant" : "Voir les étapes",
       steps: [
         deferredInstallPrompt ? "Appuie sur Installer quand Android le propose" : "Ouvre cette page dans Chrome",
         deferredInstallPrompt ? "Confirme l'installation" : "Appuie sur le menu ⋮",
@@ -2397,6 +2475,7 @@ function installSheetCopy() {
   return {
     title: "Installer Le Top",
     text: "Sur ordinateur, Chrome ou Edge peuvent ouvrir Le Top comme une app séparée. Les notifications peuvent être activées avec la cloche.",
+    primaryLabel: deferredInstallPrompt ? "Installer maintenant" : "Voir les étapes",
     steps: [
       "Ouvre cette page dans Chrome ou Edge",
       "Clique sur l'icône Installer dans la barre d'adresse, ou dans le menu",
@@ -2416,6 +2495,11 @@ function renderInstallSheetContent() {
     steps.innerHTML = copy.steps.map((step, i) => `
       <div class="install-step"><span>${i + 1}</span>${escapeHtml(step)}</div>
     `).join("");
+  }
+  const actions = document.getElementById("install-actions-wrap");
+  if (actions) {
+    actions.innerHTML = renderInstallSupportActions("install-sheet");
+    bindInstallSupportActions("install-sheet");
   }
 }
 function openInstallSheet() {
@@ -3308,6 +3392,14 @@ body.no-page-scroll #root {
 .install-steps { display: flex; flex-direction: column; gap: 8px; padding: 0 4px 10px; }
 .install-step { background: var(--bg); border-radius: 14px; padding: 12px; font-size: 13px; font-weight: 700; color: var(--ink); }
 .install-step span { display: inline-flex; width: 24px; height: 24px; align-items: center; justify-content: center; margin-right: 8px; border-radius: 50%; background: var(--lav); color: white; font-size: 11px; }
+.install-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 8px; padding: 0 4px 10px; }
+.gate-screen .install-actions { padding: 0; margin-bottom: 4px; }
+.install-action-btn {
+  border-radius: 14px; background: rgba(255,255,255,0.66);
+  box-shadow: inset 3px 3px 7px var(--shadow-d), inset -3px -3px 7px var(--shadow-l);
+  color: var(--lav-deep); font-size: 13px; padding: 12px;
+}
+.install-action-btn:active { transform: scale(0.97); }
 .settings-sheet { max-width: 520px; }
 .settings-profile {
   display: flex; align-items: center; gap: 12px; padding: 8px 10px 14px;
@@ -3418,10 +3510,11 @@ body.no-page-scroll #root {
 <div class="context-overlay" id="install-overlay">
   <div class="context-sheet">
     <div class="context-handle"></div>
-    <img class="install-logo" src="./letop-icon-192.png?v=20260702-movie-details" alt="Le Top">
+    <img class="install-logo" src="./letop-icon-192.png?v=20260702-install-flow" alt="Le Top">
     <div class="install-title" id="install-title">Installer Le Top</div>
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
+    <div id="install-actions-wrap"></div>
     <button class="btn-primary" id="btn-close-install">OK</button>
   </div>
 </div>
