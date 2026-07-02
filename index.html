@@ -9,9 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Le Top 🍿</title>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260702-poster-push">
-<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260702-poster-push">
-<link rel="manifest" href="./site.webmanifest?v=20260702-poster-push">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260702-movie-details">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260702-movie-details">
+<link rel="manifest" href="./site.webmanifest?v=20260702-movie-details">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -38,7 +38,7 @@ const PROFILE_COLORS = [
 const TMDB_IMG = "https://image.tmdb.org/t/p/w342";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260702-poster-push";
+const PWA_VERSION = "20260702-movie-details";
 
 const APP_TABS = [
   { id: "search", label: "Recherche", icon: "search", color: "var(--lav)" },
@@ -431,7 +431,16 @@ async function getRecommendations(id) {
   return data.results || [];
 }
 async function getMovieDetails(id) {
-  return await tmdbFetch(`/movie/${id}`);
+  return await tmdbFetch(`/movie/${id}`, { append_to_response: "videos" });
+}
+function bestTrailerFromDetails(details) {
+  const videos = details?.videos?.results || [];
+  return videos.find(v => v.site === "YouTube" && v.type === "Trailer" && v.official) ||
+    videos.find(v => v.site === "YouTube" && v.type === "Trailer") ||
+    videos.find(v => v.site === "YouTube");
+}
+function trailerUrl(video) {
+  return video?.key ? `https://www.youtube.com/watch?v=${encodeURIComponent(video.key)}` : "";
 }
 
 function escapeHtml(value) {
@@ -1568,6 +1577,37 @@ function removeFromTop(movieId) {
   showToast("Retiré du Top");
 }
 
+async function loadMovieActionDetails(movie) {
+  const zone = document.getElementById("movie-action-details");
+  if (!zone || !movie?.id) return;
+  zone.innerHTML = `<div class="movie-detail-loading"><span class="loading-spin"></span></div>`;
+  try {
+    const details = await getMovieDetails(movie.id);
+    if (!document.body.contains(zone) || pendingActionMovie?.id !== movie.id) return;
+    const overview = details.overview || movie.overview || "Pas de synopsis disponible pour ce film.";
+    const trailer = bestTrailerFromDetails(details);
+    const url = trailerUrl(trailer);
+    zone.innerHTML = `
+      <div class="movie-detail-box">
+        <div class="movie-detail-label">Synopsis</div>
+        <p>${escapeHtml(overview)}</p>
+        ${url ? `<button class="movie-trailer-btn" data-url="${escapeAttr(url)}" type="button">Voir la bande-annonce</button>` : ""}
+      </div>`;
+    zone.querySelector(".movie-trailer-btn")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      window.open(e.currentTarget.dataset.url, "_blank", "noopener,noreferrer");
+    });
+  } catch (e) {
+    if (!document.body.contains(zone) || pendingActionMovie?.id !== movie.id) return;
+    const overview = movie.overview || "";
+    zone.innerHTML = overview ? `
+      <div class="movie-detail-box">
+        <div class="movie-detail-label">Synopsis</div>
+        <p>${escapeHtml(overview)}</p>
+      </div>` : "";
+  }
+}
+
 function openMovieActionSheet(movie, origin = "search", index = null) {
   pendingActionMovie = movie;
   pendingActionOrigin = origin;
@@ -1586,6 +1626,7 @@ function openMovieActionSheet(movie, origin = "search", index = null) {
   `;
 
   document.getElementById("movie-action-items").innerHTML = `
+    <div id="movie-action-details"></div>
     <div class="context-item movie-action-item" data-action="top"><span class="ic">🏆</span> ${inTop ? "Déjà dans ton Top" : "Ajouter au Top"}</div>
     <div class="context-item movie-action-item" data-action="watched"><span class="ic">🎟️</span> ${inWatched ? "Modifier la note" : "Marquer comme vu"}</div>
     <div class="context-item movie-action-item" data-action="watchlist"><span class="ic">🍿</span> ${inWatchlist ? "Déjà dans À voir" : "Ajouter à À voir"}</div>
@@ -1596,6 +1637,7 @@ function openMovieActionSheet(movie, origin = "search", index = null) {
   `;
 
   document.getElementById("movie-action-overlay").classList.add("show");
+  loadMovieActionDetails(movie);
   document.querySelectorAll(".movie-action-item").forEach(item => {
     item.addEventListener("click", () => handleMovieAction(item.dataset.action));
   });
@@ -3230,6 +3272,26 @@ body.no-page-scroll #root {
 .context-preview { display: flex; align-items: center; gap: 12px; padding: 6px 10px 16px; }
 .context-preview img { width: 48px; aspect-ratio: 2/3; object-fit: cover; border-radius: 8px; }
 .context-preview-title { font-weight: 700; font-size: 15px; }
+.movie-detail-loading { display: flex; justify-content: center; padding: 6px 0 12px; }
+.movie-detail-box {
+  margin: 0 4px 8px; padding: 12px;
+  border-radius: 16px; background: var(--bg);
+  box-shadow: inset 3px 3px 7px var(--shadow-d), inset -3px -3px 7px var(--shadow-l);
+}
+.movie-detail-label {
+  font-family: 'DM Mono', monospace; font-size: 10px; color: var(--ink-soft);
+  text-transform: uppercase; margin-bottom: 6px;
+}
+.movie-detail-box p {
+  color: rgba(45,42,61,0.78); font-size: 12.5px; line-height: 1.55; font-weight: 600;
+}
+.movie-trailer-btn {
+  margin-top: 10px; width: 100%; border: none; border-radius: 13px;
+  background: var(--lav); color: white; padding: 11px 12px;
+  font-family: 'Plus Jakarta Sans', sans-serif; font-size: 13px; font-weight: 800;
+  box-shadow: 3px 3px 8px var(--shadow-d), -3px -3px 8px var(--shadow-l);
+}
+.movie-trailer-btn:active { transform: scale(0.98); }
 .context-item { display: flex; align-items: center; gap: 12px; padding: 14px 12px; border-radius: 14px; font-weight: 600; font-size: 15px; color: var(--ink); cursor: pointer; transition: background 0.1s; }
 .context-item:active { background: var(--bg); }
 .context-item.danger { color: #d64668; }
@@ -3357,7 +3419,7 @@ body.no-page-scroll #root {
 <div class="context-overlay" id="install-overlay">
   <div class="context-sheet">
     <div class="context-handle"></div>
-    <img class="install-logo" src="./letop-icon-192.png?v=20260702-poster-push" alt="Le Top">
+    <img class="install-logo" src="./letop-icon-192.png?v=20260702-movie-details" alt="Le Top">
     <div class="install-title" id="install-title">Installer Le Top</div>
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
