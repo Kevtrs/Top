@@ -9,9 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Le Top 🍿</title>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260703-reco-tuning">
-<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260703-reco-tuning">
-<link rel="manifest" href="./site.webmanifest?v=20260703-reco-tuning">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260703-reco-ui">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260703-reco-ui">
+<link rel="manifest" href="./site.webmanifest?v=20260703-reco-ui">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -38,7 +38,7 @@ const PROFILE_COLORS = [
 const TMDB_IMG = "https://image.tmdb.org/t/p/w342";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260703-reco-tuning";
+const PWA_VERSION = "20260703-reco-ui";
 const APP_PUBLIC_URL = "https://kevtrs.github.io/Top/";
 
 const APP_TABS = [
@@ -533,7 +533,6 @@ function ensureRecoPrefsListener() {
     if (!snap.exists()) return;
     recoPrefs = normalizeRecoPrefs(snap.data());
     saveLocalRecoPrefs(currentUser, recoPrefs);
-    if (activeTab === "search" && recoExpanded) updateRecommendations();
   }, () => {});
 }
 function profileById(profileId) {
@@ -884,6 +883,12 @@ function tabIconHtml(icon) {
       <path d="M17 17H4a1 1 0 0 1-.74-1.673C4.59 13.956 6 12.499 6 8a6 6 0 0 1 .258-1.742"></path>
       <path d="m2 2 20 20"></path>
       <path d="M8.668 3.01A6 6 0 0 1 18 8c0 2.687.77 4.653 1.707 6.05"></path>
+    </svg>`;
+  }
+  if (icon === "x") {
+    return `<svg ${common}>
+      <path d="M18 6 6 18"></path>
+      <path d="m6 6 12 12"></path>
     </svg>`;
   }
   if (icon === "phone") {
@@ -2735,7 +2740,20 @@ function recommendationReason(movie) {
   return "Selon tes genres préférés";
 }
 
-async function ignoreRecommendedMovie(movie) {
+function removeRecommendedCard(card) {
+  if (!card) return;
+  const scroll = card.closest(".reco-scroll");
+  card.classList.add("is-removing");
+  setTimeout(() => {
+    card.remove();
+    if (scroll && !scroll.querySelector(".reco-item")) {
+      scroll.innerHTML = `<div style="padding:16px;font-size:12px;color:var(--ink-soft);font-weight:600">Plus de recos ici pour l'instant</div>`;
+    }
+    scheduleScrollLockUpdate();
+  }, 180);
+}
+
+async function ignoreRecommendedMovie(movie, card = null) {
   if (!currentUser || !movie?.id) return;
   const userId = currentUser;
   const ignoredIds = new Set(recoPrefs.ignoredIds || []);
@@ -2751,8 +2769,8 @@ async function ignoreRecommendedMovie(movie) {
   });
   recoPrefs = nextPrefs;
   saveLocalRecoPrefs(userId, nextPrefs);
+  removeRecommendedCard(card);
   showToast("Je l'enlève des recos");
-  if (activeTab === "search" && recoExpanded) updateRecommendations();
   try {
     await setDoc(doc(db, "recoPrefs", userId), nextPrefs, { merge: true });
   } catch (e) {
@@ -2838,7 +2856,7 @@ async function updateRecommendations() {
       const rating = m.vote_average ? Number(m.vote_average).toFixed(1) : "—";
       return `
       <div class="reco-item" data-id="${escapeAttr(m.id)}">
-        <button class="reco-dismiss-btn" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(m)))}' type="button" aria-label="Pas intéressé">&times;</button>
+        <button class="reco-dismiss-btn" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(m)))}' type="button" aria-label="Pas intéressé">${tabIconHtml("x")}</button>
         ${poster ? `<img src="${poster}" alt="${escapeAttr(m.title)}">` : `<div style="aspect-ratio:2/3;background:#eee"></div>`}
         <div class="reco-item-body">
           <div class="reco-item-title">${title}</div>
@@ -2856,8 +2874,9 @@ async function updateRecommendations() {
     });
     scroll.querySelectorAll(".reco-dismiss-btn").forEach(btn => {
       btn.addEventListener("click", (e) => {
+        e.preventDefault();
         e.stopPropagation();
-        ignoreRecommendedMovie(JSON.parse(btn.dataset.movie));
+        ignoreRecommendedMovie(JSON.parse(btn.dataset.movie), btn.closest(".reco-item"));
       });
     });
   } catch (e) {
@@ -3511,17 +3530,20 @@ body.no-page-scroll #root {
 .reco-scroll { display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 4px; -ms-overflow-style: none; scrollbar-width: none; }
 .reco-scroll::-webkit-scrollbar { display: none; }
 .reco-item { position: relative; flex: 0 0 120px; scroll-snap-align: start; background: var(--bg); border-radius: 16px; overflow: hidden; }
+.reco-item.is-removing { transform: scale(0.92); opacity: 0; pointer-events: none; transition: transform 0.18s ease, opacity 0.18s ease; }
 .reco-item img { width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block; }
 .reco-item-body { padding: 8px 9px; }
 .reco-item-title { font-size: 11px; font-weight: 700; line-height: 1.25; color: var(--ink); }
 .reco-item-meta { font-family: 'DM Mono', monospace; font-size: 9px; color: var(--ink-soft); margin-top: 3px; }
 .reco-item-reason { font-size: 9.5px; color: rgba(154,147,184,0.92); line-height: 1.25; font-weight: 700; margin-top: 4px; min-height: 22px; }
 .reco-dismiss-btn {
-  position: absolute; top: 7px; right: 7px; width: 27px; height: 27px; border: none; border-radius: 50%;
-  background: rgba(255,255,255,0.9); color: var(--ink-soft); font-size: 18px; line-height: 1;
-  display: grid; place-items: center; box-shadow: 3px 3px 8px rgba(45,42,61,0.16), -2px -2px 8px rgba(255,255,255,0.68);
-  z-index: 2; font-family: 'Plus Jakarta Sans', sans-serif;
+  position: absolute; top: 7px; right: 7px; width: 30px; height: 30px; border: none; border-radius: 50%;
+  padding: 0; background: rgba(255,255,255,0.9); color: var(--ink-soft);
+  display: inline-flex; align-items: center; justify-content: center;
+  box-shadow: 3px 3px 8px rgba(45,42,61,0.16), -2px -2px 8px rgba(255,255,255,0.68);
+  z-index: 2;
 }
+.reco-dismiss-btn .tab-svg { width: 16px; height: 16px; display: block; }
 .reco-dismiss-btn:active { transform: scale(0.88); color: #d64668; }
 .reco-add-btn { width: 100%; margin-top: 6px; background: var(--lav); color: white; border: none; padding: 6px; border-radius: 8px; font-size: 10px; font-weight: 700; cursor: pointer; transition: transform 0.1s; }
 .reco-add-btn:active { transform: scale(0.92); }
@@ -3737,7 +3759,7 @@ body.no-page-scroll #root {
 <div class="context-overlay" id="install-overlay">
   <div class="context-sheet">
     <div class="context-handle"></div>
-    <img class="install-logo" src="./letop-icon-192.png?v=20260703-reco-tuning" alt="Le Top">
+    <img class="install-logo" src="./letop-icon-192.png?v=20260703-reco-ui" alt="Le Top">
     <div class="install-title" id="install-title">Installer Le Top</div>
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
