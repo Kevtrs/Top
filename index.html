@@ -9,9 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Le Top 🍿</title>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260703-reco-signals">
-<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260703-reco-signals">
-<link rel="manifest" href="./site.webmanifest?v=20260703-reco-signals">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260703-reco-no-seen">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260703-reco-no-seen">
+<link rel="manifest" href="./site.webmanifest?v=20260703-reco-no-seen">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -38,7 +38,7 @@ const PROFILE_COLORS = [
 const TMDB_IMG = "https://image.tmdb.org/t/p/w342";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260703-reco-signals";
+const PWA_VERSION = "20260703-reco-no-seen";
 const APP_PUBLIC_URL = "https://kevtrs.github.io/Top/";
 
 const APP_TABS = [
@@ -2896,12 +2896,6 @@ async function ignoreRecommendedMovie(movie, card = null) {
   await persistIgnoredMovie(movie, dislikedGenreWeights, "Je l'enlève des recos");
 }
 
-async function markRecommendedAsSeen(movie, card = null) {
-  if (!currentUser || !movie?.id) return;
-  removeRecommendedCard(card);
-  await persistIgnoredMovie(movie, { ...(recoPrefs.dislikedGenreWeights || {}) }, "Noté comme déjà vu");
-}
-
 async function updateRecommendations() {
   const scroll = document.getElementById("reco-scroll");
   if (!scroll) return;
@@ -3047,7 +3041,6 @@ async function updateRecommendations() {
       const rating = m.vote_average ? Number(m.vote_average).toFixed(1) : "—";
       return `
       <div class="reco-item" data-id="${escapeAttr(m.id)}">
-        <button class="reco-seen-btn" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(m)))}' type="button" aria-label="Deja vu">${tabIconHtml("ticket")}</button>
         <button class="reco-dismiss-btn" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(m)))}' type="button" aria-label="Pas envie">${tabIconHtml("x")}</button>
         ${poster ? `<img src="${poster}" alt="${escapeAttr(m.title)}">` : `<div style="aspect-ratio:2/3;background:#eee"></div>`}
         <div class="reco-item-body">
@@ -3069,13 +3062,6 @@ async function updateRecommendations() {
         e.preventDefault();
         e.stopPropagation();
         ignoreRecommendedMovie(JSON.parse(btn.dataset.movie), btn.closest(".reco-item"));
-      });
-    });
-    scroll.querySelectorAll(".reco-seen-btn").forEach(btn => {
-      btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        markRecommendedAsSeen(JSON.parse(btn.dataset.movie), btn.closest(".reco-item"));
       });
     });
   } catch (e) {
@@ -3739,20 +3725,15 @@ body.no-page-scroll #root {
 .reco-item-title { font-size: 11px; font-weight: 700; line-height: 1.25; color: var(--ink); }
 .reco-item-meta { font-family: 'DM Mono', monospace; font-size: 9px; color: var(--ink-soft); margin-top: 3px; }
 .reco-item-reason { font-size: 9.5px; color: rgba(154,147,184,0.92); line-height: 1.25; font-weight: 700; margin-top: 4px; min-height: 22px; }
-.reco-dismiss-btn,
-.reco-seen-btn {
-  position: absolute; top: 7px; width: 30px; height: 30px; border: none; border-radius: 50%;
+.reco-dismiss-btn {
+  position: absolute; top: 7px; right: 7px; width: 30px; height: 30px; border: none; border-radius: 50%;
   padding: 0; background: rgba(255,255,255,0.9); color: var(--ink-soft);
   display: inline-flex; align-items: center; justify-content: center;
   box-shadow: 3px 3px 8px rgba(45,42,61,0.16), -2px -2px 8px rgba(255,255,255,0.68);
   z-index: 2;
 }
-.reco-seen-btn { left: 7px; color: var(--purple); }
-.reco-dismiss-btn { right: 7px; }
-.reco-dismiss-btn .tab-svg,
-.reco-seen-btn .tab-svg { width: 16px; height: 16px; display: block; }
+.reco-dismiss-btn .tab-svg { width: 16px; height: 16px; display: block; }
 .reco-dismiss-btn:active { transform: scale(0.88); color: #d64668; }
-.reco-seen-btn:active { transform: scale(0.88); color: var(--lav-deep); }
 .reco-add-btn { width: 100%; margin-top: 6px; background: var(--lav); color: white; border: none; padding: 6px; border-radius: 8px; font-size: 10px; font-weight: 700; cursor: pointer; transition: transform 0.1s; }
 .reco-add-btn:active { transform: scale(0.92); }
 .reco-add-btn:disabled { background: var(--ink-faint); }
@@ -3967,7 +3948,7 @@ body.no-page-scroll #root {
 <div class="context-overlay" id="install-overlay">
   <div class="context-sheet">
     <div class="context-handle"></div>
-    <img class="install-logo" src="./letop-icon-192.png?v=20260703-reco-signals" alt="Le Top">
+    <img class="install-logo" src="./letop-icon-192.png?v=20260703-reco-no-seen" alt="Le Top">
     <div class="install-title" id="install-title">Installer Le Top</div>
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
