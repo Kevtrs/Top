@@ -9,9 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Le Top 🍿</title>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260703-reco-refill">
-<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260703-reco-refill">
-<link rel="manifest" href="./site.webmanifest?v=20260703-reco-refill">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260703-reco-fallback">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260703-reco-fallback">
+<link rel="manifest" href="./site.webmanifest?v=20260703-reco-fallback">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -38,7 +38,7 @@ const PROFILE_COLORS = [
 const TMDB_IMG = "https://image.tmdb.org/t/p/w342";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260703-reco-refill";
+const PWA_VERSION = "20260703-reco-fallback";
 const APP_PUBLIC_URL = "https://kevtrs.github.io/Top/";
 
 const APP_TABS = [
@@ -434,15 +434,22 @@ async function getRecommendations(id, page = 1) {
   const data = await tmdbFetch(`/movie/${id}/recommendations`, { page });
   return data.results || [];
 }
+async function getSimilarMovies(id, page = 1) {
+  const data = await tmdbFetch(`/movie/${id}/similar`, { page });
+  return data.results || [];
+}
 async function discoverMoviesByGenres(genreIds, params = {}) {
   if (!genreIds.length) return [];
+  const operator = params.genreOperator || "and";
+  const cleanParams = { ...params };
+  delete cleanParams.genreOperator;
   const data = await tmdbFetch("/discover/movie", {
     include_adult: "false",
     include_video: "false",
-    with_genres: genreIds.join(","),
+    with_genres: genreIds.join(operator === "or" ? "|" : ","),
     sort_by: "vote_average.desc",
     "vote_count.gte": "180",
-    ...params
+    ...cleanParams
   });
   return data.results || [];
 }
@@ -2718,6 +2725,13 @@ function scoreCandidate(candidate, genreWeights, prefs = recoPrefs) {
   return score;
 }
 
+function sortRecommendationCandidates(candidates, genreWeights, prefs, threshold) {
+  return [...candidates]
+    .map(m => ({ ...m, _score: scoreCandidate(m, genreWeights, prefs) }))
+    .filter(m => m._score > threshold)
+    .sort((a,b) => b._score - a._score);
+}
+
 function mergeRecommendationCandidate(map, movie, meta = {}) {
   if (!movie?.id) return;
   const sourceWeight = Number(meta.sourceWeight) || 0;
@@ -2738,6 +2752,28 @@ function recommendationReason(movie) {
   const reason = movie._because?.[0];
   if (reason) return `Proche de ${reason}`;
   return "Selon tes genres préférés";
+}
+
+function renderNoRecommendationsMessage(scroll) {
+  const hasIgnored = (recoPrefs.ignoredIds || []).length > 0;
+  scroll.innerHTML = `
+    <div class="reco-empty">
+      <div>Plus de recos pour l'instant. Ton prochain film noté aidera l'algo.</div>
+      ${hasIgnored ? `<button class="reco-reset-btn" id="btn-reset-recos" type="button">Réinitialiser les refus</button>` : ""}
+    </div>`;
+  document.getElementById("btn-reset-recos")?.addEventListener("click", resetRecommendationFeedback);
+}
+
+async function resetRecommendationFeedback() {
+  if (!currentUser) return;
+  const userId = currentUser;
+  recoPrefs = normalizeRecoPrefs();
+  saveLocalRecoPrefs(userId, recoPrefs);
+  showToast("Refus réinitialisés");
+  updateRecommendations();
+  try {
+    await setDoc(doc(db, "recoPrefs", userId), recoPrefs, { merge: true });
+  } catch (e) {}
 }
 
 function removeRecommendedCard(card) {
@@ -2811,8 +2847,11 @@ async function updateRecommendations() {
     const sourceJobs = sources.map(async (source) => {
       try {
         const pages = source.sourceRank <= 3 ? [1, 2] : [1];
-        const recos = (await Promise.all(pages.map(page => getRecommendations(source.movie.id, page).catch(() => [])))).flat();
-        return recos.map(movie => ({
+        const [recos, similar] = await Promise.all([
+          Promise.all(pages.map(page => getRecommendations(source.movie.id, page).catch(() => []))),
+          source.sourceRank <= 4 ? Promise.all([1, 2].map(page => getSimilarMovies(source.movie.id, page).catch(() => []))) : Promise.resolve([])
+        ]);
+        return [...recos.flat(), ...similar.flat()].map(movie => ({
           movie,
           meta: { because: source.movie.title, sourceWeight: source.weight }
         }));
@@ -2829,11 +2868,19 @@ async function updateRecommendations() {
           page
         }).then(list => list.map(movie => ({ movie, meta: { sourceWeight: 2.4 } }))).catch(() => []));
       });
+      [1, 2, 3].forEach(page => {
+        discoverJobs.push(discoverMoviesByGenres(strongGenres.slice(0, 3), {
+          genreOperator: "or",
+          "vote_count.gte": "240",
+          sort_by: page === 1 ? "popularity.desc" : "vote_average.desc",
+          page
+        }).then(list => list.map(movie => ({ movie, meta: { sourceWeight: 1.1 } }))).catch(() => []));
+      });
     }
     if (strongGenres.length >= 1) {
-      [1, 2].forEach(page => {
+      [1, 2, 3].forEach(page => {
         discoverJobs.push(discoverMoviesByGenres([strongGenres[0]], {
-          "vote_count.gte": "420",
+          "vote_count.gte": "220",
           sort_by: "popularity.desc",
           page
         }).then(list => list.map(movie => ({ movie, meta: { sourceWeight: 1.4 } }))).catch(() => []));
@@ -2850,14 +2897,29 @@ async function updateRecommendations() {
       }
     });
 
-    const scored = [...merged.values()]
-      .map(m => ({ ...m, _score: scoreCandidate(m, genreWeights, recoPrefs) }))
-      .filter(m => m._score > 8)
-      .sort((a,b) => b._score - a._score);
+    const candidates = [...merged.values()];
+    let scored = sortRecommendationCandidates(candidates, genreWeights, recoPrefs, 8);
+    if (scored.length < 6) {
+      const softPrefs = normalizeRecoPrefs({
+        ignoredIds: recoPrefs.ignoredIds,
+        dislikedGenreWeights: {},
+        updatedAt: recoPrefs.updatedAt
+      });
+      const relaxed = sortRecommendationCandidates(candidates, genreWeights, softPrefs, 0);
+      const existing = new Set(scored.map(m => m.id));
+      scored = [...scored, ...relaxed.filter(m => !existing.has(m.id))];
+    }
+    if (scored.length < 6) {
+      const fallback = candidates
+        .filter(m => (m.genre_ids || []).some(gid => genreWeights[gid] > 0))
+        .sort((a,b) => ((b.vote_average || 0) * Math.log10((b.vote_count || 0) + 10)) - ((a.vote_average || 0) * Math.log10((a.vote_count || 0) + 10)));
+      const existing = new Set(scored.map(m => m.id));
+      scored = [...scored, ...fallback.filter(m => !existing.has(m.id))];
+    }
     const final = scored.slice(0, 10);
 
     if (!final.length) {
-      scroll.innerHTML = `<div style="padding:16px;font-size:12px;color:var(--ink-soft);font-weight:600">Plus de recos pour l'instant. Ton prochain film noté aidera l'algo.</div>`;
+      renderNoRecommendationsMessage(scroll);
       return;
     }
 
@@ -3541,6 +3603,16 @@ body.no-page-scroll #root {
 
 .reco-scroll { display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 4px; -ms-overflow-style: none; scrollbar-width: none; }
 .reco-scroll::-webkit-scrollbar { display: none; }
+.reco-empty {
+  width: 100%; min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 12px; color: var(--ink-soft); font-size: 12px; font-weight: 800; line-height: 1.45;
+}
+.reco-reset-btn {
+  flex: 0 0 auto; border: none; border-radius: 13px; background: var(--bg); color: var(--lav-deep);
+  padding: 10px 12px; font-family: 'Plus Jakarta Sans', sans-serif; font-size: 11px; font-weight: 900;
+  box-shadow: inset 3px 3px 7px var(--shadow-d), inset -3px -3px 7px var(--shadow-l);
+}
+.reco-reset-btn:active { transform: scale(0.96); }
 .reco-item { position: relative; flex: 0 0 120px; scroll-snap-align: start; background: var(--bg); border-radius: 16px; overflow: hidden; }
 .reco-item.is-removing { transform: scale(0.92); opacity: 0; pointer-events: none; transition: transform 0.18s ease, opacity 0.18s ease; }
 .reco-item img { width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block; }
@@ -3771,7 +3843,7 @@ body.no-page-scroll #root {
 <div class="context-overlay" id="install-overlay">
   <div class="context-sheet">
     <div class="context-handle"></div>
-    <img class="install-logo" src="./letop-icon-192.png?v=20260703-reco-refill" alt="Le Top">
+    <img class="install-logo" src="./letop-icon-192.png?v=20260703-reco-fallback" alt="Le Top">
     <div class="install-title" id="install-title">Installer Le Top</div>
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
