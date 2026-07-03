@@ -9,9 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Le Top 🍿</title>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260702-install-flow">
-<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260702-install-flow">
-<link rel="manifest" href="./site.webmanifest?v=20260702-install-flow">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260703-reco-tuning">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260703-reco-tuning">
+<link rel="manifest" href="./site.webmanifest?v=20260703-reco-tuning">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -38,7 +38,7 @@ const PROFILE_COLORS = [
 const TMDB_IMG = "https://image.tmdb.org/t/p/w342";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260702-install-flow";
+const PWA_VERSION = "20260703-reco-tuning";
 const APP_PUBLIC_URL = "https://kevtrs.github.io/Top/";
 
 const APP_TABS = [
@@ -76,6 +76,9 @@ let PROFILES = []; // chargé dynamiquement depuis Firestore
 let PROFILE_INDEX = [];
 let DATA_PROFILES = [];
 const PROFILE_DOC_SOURCES = { rankings: [], watched: [], watchlist: [] };
+let recoPrefs = { ignoredIds: [], dislikedGenreWeights: {}, updatedAt: 0 };
+let recoPrefsUser = null;
+let recoPrefsUnsub = null;
 let creatingProfile = false; // état "créer un nouveau profil" sur l'écran de sélection
 let deferredInstallPrompt = null;
 let recommendationRequestSeq = 0;
@@ -431,6 +434,18 @@ async function getRecommendations(id) {
   const data = await tmdbFetch(`/movie/${id}/recommendations`);
   return data.results || [];
 }
+async function discoverMoviesByGenres(genreIds, params = {}) {
+  if (!genreIds.length) return [];
+  const data = await tmdbFetch("/discover/movie", {
+    include_adult: "false",
+    include_video: "false",
+    with_genres: genreIds.join(","),
+    sort_by: "vote_average.desc",
+    "vote_count.gte": "180",
+    ...params
+  });
+  return data.results || [];
+}
 async function getMovieDetails(id) {
   return await tmdbFetch(`/movie/${id}`, { append_to_response: "videos" });
 }
@@ -458,7 +473,68 @@ function simplifyMovie(m) {
   };
 }
 function getAllMovieIdsForUser(userId) {
-  return new Set((allRankings[userId] || []).map(m => m.id));
+  return new Set([
+    ...(allRankings[userId] || []),
+    ...(allWatched[userId] || []),
+    ...(allWatchlist[userId] || [])
+  ].map(m => Number(m.id)).filter(Boolean));
+}
+function recoPrefsLocalKey(userId) {
+  return `letop_reco_prefs_${userId}`;
+}
+function normalizeRecoPrefs(data = {}) {
+  const ignoredIds = Array.isArray(data.ignoredIds)
+    ? [...new Set(data.ignoredIds.map(id => Number(id)).filter(Boolean))]
+    : [];
+  const dislikedGenreWeights = {};
+  Object.entries(data.dislikedGenreWeights || {}).forEach(([gid, value]) => {
+    const weight = Number(value);
+    if (Number.isFinite(weight) && weight > 0) dislikedGenreWeights[gid] = Math.min(weight, 12);
+  });
+  return {
+    ignoredIds,
+    dislikedGenreWeights,
+    updatedAt: Number(data.updatedAt) || 0
+  };
+}
+function loadLocalRecoPrefs(userId) {
+  if (!userId) return normalizeRecoPrefs();
+  try {
+    return normalizeRecoPrefs(JSON.parse(localStorage.getItem(recoPrefsLocalKey(userId)) || "{}"));
+  } catch (e) {
+    return normalizeRecoPrefs();
+  }
+}
+function saveLocalRecoPrefs(userId, prefs) {
+  if (!userId) return;
+  try { localStorage.setItem(recoPrefsLocalKey(userId), JSON.stringify(normalizeRecoPrefs(prefs))); } catch (e) {}
+}
+function stopRecoPrefsListener() {
+  if (recoPrefsUnsub) {
+    try { recoPrefsUnsub(); } catch (e) {}
+  }
+  recoPrefsUnsub = null;
+  recoPrefsUser = null;
+  recoPrefs = normalizeRecoPrefs();
+}
+function ensureRecoPrefsListener() {
+  if (!currentUser) {
+    stopRecoPrefsListener();
+    return;
+  }
+  if (recoPrefsUser === currentUser && recoPrefsUnsub) return;
+  if (recoPrefsUnsub) {
+    try { recoPrefsUnsub(); } catch (e) {}
+  }
+  recoPrefsUser = currentUser;
+  recoPrefs = loadLocalRecoPrefs(currentUser);
+  recoPrefsUnsub = onSnapshot(doc(db, "recoPrefs", currentUser), snap => {
+    if (recoPrefsUser !== currentUser) return;
+    if (!snap.exists()) return;
+    recoPrefs = normalizeRecoPrefs(snap.data());
+    saveLocalRecoPrefs(currentUser, recoPrefs);
+    if (activeTab === "search" && recoExpanded) updateRecommendations();
+  }, () => {});
 }
 function profileById(profileId) {
   return PROFILES.find(pr => pr.id === profileId) || PROFILE_INDEX.find(pr => pr.id === profileId) || DATA_PROFILES.find(pr => pr.id === profileId) || null;
@@ -1220,6 +1296,7 @@ function renderApp() {
 
 function renderPage() {
   applyPlatformMode();
+  ensureRecoPrefsListener();
   if (currentUser) syncPendingPushTokenForCurrentUser();
   if (shouldForceInstallGate()) {
     renderInstallGate();
@@ -2227,6 +2304,7 @@ function closeSettingsSheet() {
 }
 
 function logoutCurrentUser() {
+  stopRecoPrefsListener();
   currentUser = null;
   viewingUser = null;
   onboardingNewUser = null;
@@ -2263,6 +2341,8 @@ async function deleteCurrentAccount() {
   delete allRankings[userId];
   delete allWatched[userId];
   delete allWatchlist[userId];
+  stopRecoPrefsListener();
+  localStorage.removeItem(recoPrefsLocalKey(userId));
   incomingRecos = incomingRecos.filter(r => r.to !== userId && r.from !== userId);
   currentUser = null;
   viewingUser = null;
@@ -2283,6 +2363,7 @@ async function deleteCurrentAccount() {
       deleteDoc(doc(db, "rankings", userId)),
       deleteDoc(doc(db, "watched", userId)),
       deleteDoc(doc(db, "watchlist", userId)),
+      deleteDoc(doc(db, "recoPrefs", userId)),
       deleteDocsFrom(collection(db, "pushTokens", userId, "tokens")),
       deleteDoc(doc(db, "pushTokens", userId)),
       deleteUserRecos(userId)
@@ -2552,22 +2633,131 @@ async function ensureGenreData() {
 
 function computeGenreWeights(list) {
   const weights = {};
-  const n = list.length;
-  list.forEach((m, i) => {
-    const positionWeight = n - i;
-    (m.genre_ids || []).forEach(gid => { weights[gid] = (weights[gid] || 0) + positionWeight; });
+  const focused = list.slice(0, 25);
+  const n = Math.max(focused.length, 1);
+  focused.forEach((m, i) => {
+    const rankRatio = (n - i) / n;
+    const podiumBoost = i === 0 ? 5 : i === 1 ? 3.6 : i === 2 ? 2.8 : i < 10 ? 1.7 : 1;
+    const positionWeight = podiumBoost * (1 + rankRatio * 3);
+    const genres = m.genre_ids || [];
+    genres.forEach(gid => { weights[gid] = (weights[gid] || 0) + positionWeight / Math.max(genres.length, 1); });
   });
+  const max = Math.max(...Object.values(weights), 1);
+  Object.keys(weights).forEach(gid => { weights[gid] = (weights[gid] / max) * 10; });
   return weights;
 }
 
-function scoreCandidate(candidate, genreWeights) {
+function topGenreIds(genreWeights, limit = 5) {
+  return Object.entries(genreWeights)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([gid]) => Number(gid));
+}
+
+function sourceWeightForRank(index) {
+  if (index === 0) return 8;
+  if (index === 1) return 6.4;
+  if (index === 2) return 5.2;
+  return Math.max(2, 4.4 - index * 0.35);
+}
+
+function pickRecommendationSources(list, genreWeights) {
+  const selected = [];
+  const usedPrimaryGenres = new Set();
+  list.slice(0, 14).forEach((movie, index) => {
+    const genres = (movie.genre_ids || []).filter(gid => genreWeights[gid] > 0);
+    if (!genres.length) return;
+    const primary = [...genres].sort((a, b) => (genreWeights[b] || 0) - (genreWeights[a] || 0))[0];
+    if (index < 3 || !usedPrimaryGenres.has(primary) || selected.length < 5) {
+      selected.push({ movie, weight: sourceWeightForRank(index), sourceRank: index + 1 });
+      usedPrimaryGenres.add(primary);
+    }
+  });
+  return selected.slice(0, 7);
+}
+
+function shouldKeepRecommendationCandidate(candidate, knownIds, ignoredIds, genreWeights) {
+  const candidateId = Number(candidate?.id);
+  if (!candidateId || knownIds.has(candidateId) || ignoredIds.has(candidateId)) return false;
+  if (!candidate.poster_path) return false;
   const genres = candidate.genre_ids || [];
-  if (!genres.length) return 0;
+  if (!genres.some(gid => genreWeights[gid] > 0)) return false;
+  const voteCount = Number(candidate.vote_count) || 0;
+  const voteAverage = Number(candidate.vote_average) || 0;
+  return voteCount >= 45 || voteAverage >= 7.2;
+}
+
+function scoreCandidate(candidate, genreWeights, prefs = recoPrefs) {
+  const genres = candidate.genre_ids || [];
+  if (!genres.length) return -999;
+  const matchedGenres = genres.filter(gid => genreWeights[gid] > 0);
+  if (!matchedGenres.length) return -999;
+
+  const likedWeight = matchedGenres.reduce((sum, gid) => sum + (genreWeights[gid] || 0), 0);
+  const coverage = matchedGenres.length / genres.length;
+  const dislikedPenalty = genres.reduce((sum, gid) => sum + (Number(prefs.dislikedGenreWeights?.[gid]) || 0), 0);
+  const voteAverage = Number(candidate.vote_average) || 0;
+  const voteCount = Number(candidate.vote_count) || 0;
+  const voteConfidence = Math.min(5, Math.log10(voteCount + 10));
+  const sourceBoost = Number(candidate._sourceWeight) || 0;
+
   let score = 0;
-  genres.forEach(gid => { score += (genreWeights[gid] || 0); });
-  score = score / genres.length;
-  score += (candidate.vote_average || 0) * 2;
+  score += likedWeight * (1.45 + coverage);
+  score += matchedGenres.length * 4.5;
+  score += voteAverage * 1.35;
+  score += voteConfidence * 2.2;
+  score += sourceBoost * 1.6;
+  score -= dislikedPenalty * 7;
+  if (coverage < 0.34) score -= 9;
+  if (voteCount < 80) score -= 4;
   return score;
+}
+
+function mergeRecommendationCandidate(map, movie, meta = {}) {
+  if (!movie?.id) return;
+  const sourceWeight = Number(meta.sourceWeight) || 0;
+  const existing = map.get(movie.id);
+  if (existing) {
+    existing._sourceWeight = Math.max(existing._sourceWeight || 0, sourceWeight);
+    if (meta.because && !(existing._because || []).includes(meta.because)) existing._because.push(meta.because);
+    return;
+  }
+  map.set(movie.id, {
+    ...movie,
+    _sourceWeight: sourceWeight,
+    _because: meta.because ? [meta.because] : []
+  });
+}
+
+function recommendationReason(movie) {
+  const reason = movie._because?.[0];
+  if (reason) return `Proche de ${reason}`;
+  return "Selon tes genres préférés";
+}
+
+async function ignoreRecommendedMovie(movie) {
+  if (!currentUser || !movie?.id) return;
+  const userId = currentUser;
+  const ignoredIds = new Set(recoPrefs.ignoredIds || []);
+  ignoredIds.add(Number(movie.id));
+  const dislikedGenreWeights = { ...(recoPrefs.dislikedGenreWeights || {}) };
+  (movie.genre_ids || []).forEach(gid => {
+    dislikedGenreWeights[gid] = Math.min(8, (Number(dislikedGenreWeights[gid]) || 0) + 0.45);
+  });
+  const nextPrefs = normalizeRecoPrefs({
+    ignoredIds: [...ignoredIds],
+    dislikedGenreWeights,
+    updatedAt: Date.now()
+  });
+  recoPrefs = nextPrefs;
+  saveLocalRecoPrefs(userId, nextPrefs);
+  showToast("Je l'enlève des recos");
+  if (activeTab === "search" && recoExpanded) updateRecommendations();
+  try {
+    await setDoc(doc(db, "recoPrefs", userId), nextPrefs, { merge: true });
+  } catch (e) {
+    showToast("Refus gardé sur cet appareil");
+  }
 }
 
 async function updateRecommendations() {
@@ -2590,30 +2780,51 @@ async function updateRecommendations() {
     const freshList = myRanked();
     const genreWeights = computeGenreWeights(freshList);
 
-    const top3 = freshList.slice(0, 3);
-    const next3 = freshList.slice(3, 6);
-    const sourcePool = [...top3, ...top3, ...next3];
-    const sample = [...sourcePool].sort(() => Math.random() - 0.5).slice(0, 5);
-    const uniqueSample = [...new Map(sample.map(m => [m.id, m])).values()];
+    const sources = pickRecommendationSources(freshList, genreWeights);
+    const strongGenres = topGenreIds(genreWeights, 4);
+    const knownIds = getAllMovieIdsForUser(currentUser);
+    const ignoredIds = new Set(recoPrefs.ignoredIds || []);
 
-    const allIds = getAllMovieIdsForUser(currentUser);
-    const results = await Promise.all(
-      uniqueSample.map(async (m) => {
-        const recos = await getRecommendations(m.id);
-        return recos.map(r => ({ ...r, because: m.title }));
-      })
-    );
+    const sourceJobs = sources.map(async (source) => {
+      try {
+        const recos = await getRecommendations(source.movie.id);
+        return recos.map(movie => ({
+          movie,
+          meta: { because: source.movie.title, sourceWeight: source.weight }
+        }));
+      } catch (e) {
+        return [];
+      }
+    });
+    const discoverJobs = [];
+    if (strongGenres.length >= 2) {
+      discoverJobs.push(discoverMoviesByGenres(strongGenres.slice(0, 2), {
+        "vote_count.gte": "160",
+        sort_by: "vote_average.desc"
+      }).then(list => list.map(movie => ({ movie, meta: { sourceWeight: 2.4 } }))).catch(() => []));
+    }
+    if (strongGenres.length >= 1) {
+      discoverJobs.push(discoverMoviesByGenres([strongGenres[0]], {
+        "vote_count.gte": "420",
+        sort_by: "popularity.desc"
+      }).then(list => list.map(movie => ({ movie, meta: { sourceWeight: 1.4 } }))).catch(() => []));
+    }
+
+    const results = await Promise.all([...sourceJobs, ...discoverJobs]);
     if (requestId !== recommendationRequestSeq || userId !== currentUser || !document.body.contains(scroll)) return;
 
-    const seen = new Set(); const merged = [];
-    results.flat().forEach(r => {
-      if (!seen.has(r.id) && !allIds.has(r.id)) { seen.add(r.id); merged.push(r); }
+    const merged = new Map();
+    results.flat().forEach(({ movie, meta }) => {
+      if (shouldKeepRecommendationCandidate(movie, knownIds, ignoredIds, genreWeights)) {
+        mergeRecommendationCandidate(merged, movie, meta);
+      }
     });
 
-    merged.forEach(m => { m._score = scoreCandidate(m, genreWeights); });
-    const scoredSorted = merged.filter(m => m._score > 0).sort((a,b) => b._score - a._score);
-    const fallback = merged.filter(m => m._score === 0).sort((a,b) => (b.vote_average||0) - (a.vote_average||0));
-    const final = [...scoredSorted, ...fallback].slice(0, 10);
+    const scored = [...merged.values()]
+      .map(m => ({ ...m, _score: scoreCandidate(m, genreWeights, recoPrefs) }))
+      .filter(m => m._score > 8)
+      .sort((a,b) => b._score - a._score);
+    const final = scored.slice(0, 10);
 
     if (!final.length) {
       scroll.innerHTML = `<div style="padding:16px;font-size:12px;color:var(--ink-soft);font-weight:600">Classe plus de films pour avoir des recos</div>`;
@@ -2626,11 +2837,13 @@ async function updateRecommendations() {
       const year = m.release_date ? escapeHtml(m.release_date.slice(0,4)) : "?";
       const rating = m.vote_average ? Number(m.vote_average).toFixed(1) : "—";
       return `
-      <div class="reco-item">
+      <div class="reco-item" data-id="${escapeAttr(m.id)}">
+        <button class="reco-dismiss-btn" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(m)))}' type="button" aria-label="Pas intéressé">&times;</button>
         ${poster ? `<img src="${poster}" alt="${escapeAttr(m.title)}">` : `<div style="aspect-ratio:2/3;background:#eee"></div>`}
         <div class="reco-item-body">
           <div class="reco-item-title">${title}</div>
           <div class="reco-item-meta">${year} · ⭐${rating}</div>
+          <div class="reco-item-reason">${escapeHtml(recommendationReason(m))}</div>
           <button class="reco-add-btn" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(m)))}'>Choisir</button>
         </div>
       </div>`;
@@ -2639,6 +2852,12 @@ async function updateRecommendations() {
     scroll.querySelectorAll(".reco-add-btn").forEach(btn => {
       btn.addEventListener("click", () => {
         openMovieActionSheet(JSON.parse(btn.dataset.movie), "recommendation");
+      });
+    });
+    scroll.querySelectorAll(".reco-dismiss-btn").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        ignoreRecommendedMovie(JSON.parse(btn.dataset.movie));
       });
     });
   } catch (e) {
@@ -3291,11 +3510,19 @@ body.no-page-scroll #root {
 
 .reco-scroll { display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 4px; -ms-overflow-style: none; scrollbar-width: none; }
 .reco-scroll::-webkit-scrollbar { display: none; }
-.reco-item { flex: 0 0 120px; scroll-snap-align: start; background: var(--bg); border-radius: 16px; overflow: hidden; }
+.reco-item { position: relative; flex: 0 0 120px; scroll-snap-align: start; background: var(--bg); border-radius: 16px; overflow: hidden; }
 .reco-item img { width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block; }
 .reco-item-body { padding: 8px 9px; }
 .reco-item-title { font-size: 11px; font-weight: 700; line-height: 1.25; color: var(--ink); }
 .reco-item-meta { font-family: 'DM Mono', monospace; font-size: 9px; color: var(--ink-soft); margin-top: 3px; }
+.reco-item-reason { font-size: 9.5px; color: rgba(154,147,184,0.92); line-height: 1.25; font-weight: 700; margin-top: 4px; min-height: 22px; }
+.reco-dismiss-btn {
+  position: absolute; top: 7px; right: 7px; width: 27px; height: 27px; border: none; border-radius: 50%;
+  background: rgba(255,255,255,0.9); color: var(--ink-soft); font-size: 18px; line-height: 1;
+  display: grid; place-items: center; box-shadow: 3px 3px 8px rgba(45,42,61,0.16), -2px -2px 8px rgba(255,255,255,0.68);
+  z-index: 2; font-family: 'Plus Jakarta Sans', sans-serif;
+}
+.reco-dismiss-btn:active { transform: scale(0.88); color: #d64668; }
 .reco-add-btn { width: 100%; margin-top: 6px; background: var(--lav); color: white; border: none; padding: 6px; border-radius: 8px; font-size: 10px; font-weight: 700; cursor: pointer; transition: transform 0.1s; }
 .reco-add-btn:active { transform: scale(0.92); }
 .reco-add-btn:disabled { background: var(--ink-faint); }
@@ -3510,7 +3737,7 @@ body.no-page-scroll #root {
 <div class="context-overlay" id="install-overlay">
   <div class="context-sheet">
     <div class="context-handle"></div>
-    <img class="install-logo" src="./letop-icon-192.png?v=20260702-install-flow" alt="Le Top">
+    <img class="install-logo" src="./letop-icon-192.png?v=20260703-reco-tuning" alt="Le Top">
     <div class="install-title" id="install-title">Installer Le Top</div>
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
