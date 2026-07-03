@@ -9,9 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Le Top 🍿</title>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260703-reco-ui">
-<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260703-reco-ui">
-<link rel="manifest" href="./site.webmanifest?v=20260703-reco-ui">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260703-reco-refill">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260703-reco-refill">
+<link rel="manifest" href="./site.webmanifest?v=20260703-reco-refill">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -38,7 +38,7 @@ const PROFILE_COLORS = [
 const TMDB_IMG = "https://image.tmdb.org/t/p/w342";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260703-reco-ui";
+const PWA_VERSION = "20260703-reco-refill";
 const APP_PUBLIC_URL = "https://kevtrs.github.io/Top/";
 
 const APP_TABS = [
@@ -430,8 +430,8 @@ async function searchMovies(q) {
   const data = await tmdbFetch("/search/movie", { query: q, include_adult: "false" });
   return data.results || [];
 }
-async function getRecommendations(id) {
-  const data = await tmdbFetch(`/movie/${id}/recommendations`);
+async function getRecommendations(id, page = 1) {
+  const data = await tmdbFetch(`/movie/${id}/recommendations`, { page });
   return data.results || [];
 }
 async function discoverMoviesByGenres(genreIds, params = {}) {
@@ -2747,7 +2747,12 @@ function removeRecommendedCard(card) {
   setTimeout(() => {
     card.remove();
     if (scroll && !scroll.querySelector(".reco-item")) {
-      scroll.innerHTML = `<div style="padding:16px;font-size:12px;color:var(--ink-soft);font-weight:600">Plus de recos ici pour l'instant</div>`;
+      scroll.innerHTML = `<div style="padding:20px"><span class="loading-spin"></span></div>`;
+      setTimeout(() => {
+        if (activeTab === "search" && recoExpanded && document.body.contains(scroll) && !scroll.querySelector(".reco-item")) {
+          updateRecommendations();
+        }
+      }, 120);
     }
     scheduleScrollLockUpdate();
   }, 180);
@@ -2805,7 +2810,8 @@ async function updateRecommendations() {
 
     const sourceJobs = sources.map(async (source) => {
       try {
-        const recos = await getRecommendations(source.movie.id);
+        const pages = source.sourceRank <= 3 ? [1, 2] : [1];
+        const recos = (await Promise.all(pages.map(page => getRecommendations(source.movie.id, page).catch(() => [])))).flat();
         return recos.map(movie => ({
           movie,
           meta: { because: source.movie.title, sourceWeight: source.weight }
@@ -2816,16 +2822,22 @@ async function updateRecommendations() {
     });
     const discoverJobs = [];
     if (strongGenres.length >= 2) {
-      discoverJobs.push(discoverMoviesByGenres(strongGenres.slice(0, 2), {
-        "vote_count.gte": "160",
-        sort_by: "vote_average.desc"
-      }).then(list => list.map(movie => ({ movie, meta: { sourceWeight: 2.4 } }))).catch(() => []));
+      [1, 2].forEach(page => {
+        discoverJobs.push(discoverMoviesByGenres(strongGenres.slice(0, 2), {
+          "vote_count.gte": "160",
+          sort_by: "vote_average.desc",
+          page
+        }).then(list => list.map(movie => ({ movie, meta: { sourceWeight: 2.4 } }))).catch(() => []));
+      });
     }
     if (strongGenres.length >= 1) {
-      discoverJobs.push(discoverMoviesByGenres([strongGenres[0]], {
-        "vote_count.gte": "420",
-        sort_by: "popularity.desc"
-      }).then(list => list.map(movie => ({ movie, meta: { sourceWeight: 1.4 } }))).catch(() => []));
+      [1, 2].forEach(page => {
+        discoverJobs.push(discoverMoviesByGenres([strongGenres[0]], {
+          "vote_count.gte": "420",
+          sort_by: "popularity.desc",
+          page
+        }).then(list => list.map(movie => ({ movie, meta: { sourceWeight: 1.4 } }))).catch(() => []));
+      });
     }
 
     const results = await Promise.all([...sourceJobs, ...discoverJobs]);
@@ -2845,7 +2857,7 @@ async function updateRecommendations() {
     const final = scored.slice(0, 10);
 
     if (!final.length) {
-      scroll.innerHTML = `<div style="padding:16px;font-size:12px;color:var(--ink-soft);font-weight:600">Classe plus de films pour avoir des recos</div>`;
+      scroll.innerHTML = `<div style="padding:16px;font-size:12px;color:var(--ink-soft);font-weight:600">Plus de recos pour l'instant. Ton prochain film noté aidera l'algo.</div>`;
       return;
     }
 
@@ -3759,7 +3771,7 @@ body.no-page-scroll #root {
 <div class="context-overlay" id="install-overlay">
   <div class="context-sheet">
     <div class="context-handle"></div>
-    <img class="install-logo" src="./letop-icon-192.png?v=20260703-reco-ui" alt="Le Top">
+    <img class="install-logo" src="./letop-icon-192.png?v=20260703-reco-refill" alt="Le Top">
     <div class="install-title" id="install-title">Installer Le Top</div>
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
