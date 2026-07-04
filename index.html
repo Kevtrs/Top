@@ -16,7 +16,7 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, doc, setDoc, deleteDoc, getDocs, onSnapshot, collection, enableNetwork, disableNetwork } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, doc, setDoc, deleteDoc, getDocs, onSnapshot, collection, enableNetwork, disableNetwork, increment } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getMessaging, getToken, isSupported as isMessagingSupported, onMessage } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js";
 
 // ─── CONFIG ───────────────────────────────────────────────────────
@@ -48,6 +48,66 @@ const APP_TABS = [
   { id: "watchlist", label: "À voir", icon: "popcorn", color: "var(--sky)" },
   { id: "friends", label: "Amis", icon: "users", color: "var(--lav)" }
 ];
+
+// ─── GAMIFICATION : catalogue de badges ────────────────────────────
+const LEVELS = [
+  { min: 0,    name: "Spectateur occasionnel" },
+  { min: 120,  name: "Cinéphile en herbe" },
+  { min: 350,  name: "Cinéphile confirmé" },
+  { min: 800,  name: "Critique avisé" },
+  { min: 1600, name: "Expert du 7e art" },
+  { min: 3000, name: "Encyclopédie vivante" },
+  { min: 5000, name: "Légende du cinéma" }
+];
+
+const MILESTONE_BADGE_DEFS = [
+  { id: "watch-5",   category: "milestone", metric: "watched",   threshold: 5,   icon: "🎬", name: "Premières séances",        desc: "5 films vus" },
+  { id: "watch-15",  category: "milestone", metric: "watched",   threshold: 15,  icon: "🍿", name: "Habitué des salles",        desc: "15 films vus" },
+  { id: "watch-40",  category: "milestone", metric: "watched",   threshold: 40,  icon: "🎞️", name: "Cinéphile confirmé",        desc: "40 films vus", xp: 80 },
+  { id: "watch-100", category: "milestone", metric: "watched",   threshold: 100, icon: "📚", name: "Encyclopédie ambulante",    desc: "100 films vus", xp: 150 },
+  { id: "watch-250", category: "milestone", metric: "watched",   threshold: 250, icon: "🕶️", name: "Rat de vidéothèque",        desc: "250 films vus", xp: 300 },
+  { id: "watch-500", category: "milestone", metric: "watched",   threshold: 500, icon: "👑", name: "Légende du grand écran",    desc: "500 films vus", xp: 600 },
+  { id: "rank-10",   category: "milestone", metric: "ranked",    threshold: 10,  icon: "🏗️", name: "Ton Top prend forme",       desc: "10 films classés", xp: 30 },
+  { id: "rank-25",   category: "milestone", metric: "ranked",    threshold: 25,  icon: "🧱", name: "Classement béton",          desc: "25 films classés", xp: 60 },
+  { id: "rank-50",   category: "milestone", metric: "ranked",    threshold: 50,  icon: "🗂️", name: "Top de collectionneur",     desc: "50 films classés", xp: 120 },
+  { id: "wl-20",     category: "milestone", metric: "watchlist", threshold: 20,  icon: "📝", name: "Toujours plus à voir",      desc: "20 films à voir", xp: 20 },
+  { id: "wl-60",     category: "milestone", metric: "watchlist", threshold: 60,  icon: "♾️", name: "Wishlist infinie",          desc: "60 films à voir", xp: 50 }
+];
+
+// Seuil plus bas pour les genres plus rares afin que les badges restent atteignables
+const GENRE_BADGE_DEFS = [
+  { gid: 18,    threshold: 12, icon: "🎭", name: "Âme sensible",           desc: "12 films Drame" },
+  { gid: 35,    threshold: 12, icon: "😂", name: "Toujours le sourire",    desc: "12 films Comédie" },
+  { gid: 28,    threshold: 12, icon: "💥", name: "Adrénaline pure",        desc: "12 films Action" },
+  { gid: 53,    threshold: 12, icon: "😰", name: "Sur le fil",             desc: "12 films Thriller" },
+  { gid: 10749, threshold: 12, icon: "💕", name: "Cœur tendre",            desc: "12 films Romance" },
+  { gid: 12,    threshold: 12, icon: "🗺️", name: "Grand explorateur",      desc: "12 films Aventure" },
+  { gid: 80,    threshold: 8,  icon: "🕵️", name: "Petit détective",        desc: "8 films Policier" },
+  { gid: 878,   threshold: 8,  icon: "🚀", name: "Voyageur intersidéral",  desc: "8 films Science-fiction" },
+  { gid: 14,    threshold: 8,  icon: "🧙", name: "Autre monde",            desc: "8 films Fantastique" },
+  { gid: 27,    threshold: 8,  icon: "🔪", name: "Amateur de frissons",    desc: "8 films Horreur" },
+  { gid: 16,    threshold: 8,  icon: "🎨", name: "Âme d'enfant",           desc: "8 films Animation" },
+  { gid: 9648,  threshold: 8,  icon: "🔎", name: "Fin limier",             desc: "8 films Mystère" },
+  { gid: 10751, threshold: 8,  icon: "👨‍👩‍👧‍👦", name: "Soirée en famille",      desc: "8 films Famille" },
+  { gid: 99,    threshold: 4,  icon: "🎥", name: "Soif de réel",           desc: "4 documentaires" },
+  { gid: 10752, threshold: 4,  icon: "⚔️", name: "Historien des tranchées", desc: "4 films de Guerre" },
+  { gid: 37,    threshold: 4,  icon: "🤠", name: "Cow-boy du dimanche",    desc: "4 westerns" },
+  { gid: 10402, threshold: 4,  icon: "🎵", name: "Mélomane",               desc: "4 films Musique" },
+  { gid: 36,    threshold: 4,  icon: "🏛️", name: "Voyage dans le temps",   desc: "4 films Histoire" }
+].map(def => ({ ...def, id: `genre-${def.gid}`, category: "genre", xp: 30 }));
+
+const SOCIAL_BADGE_DEFS = [
+  { id: "reco-sent-5",      category: "social", metric: "recosSent",     threshold: 5,  icon: "📣", name: "Bouche à oreille",        desc: "5 recos envoyées", xp: 30 },
+  { id: "reco-sent-20",     category: "social", metric: "recosSent",     threshold: 20, icon: "📢", name: "Ambassadeur du 7e art",   desc: "20 recos envoyées", xp: 80 },
+  { id: "reco-accepted-5",  category: "social", metric: "recosAccepted", threshold: 5,  icon: "✅", name: "Bon goût certifié",        desc: "5 recos adoptées par des amis", xp: 60 },
+  { id: "reco-accepted-15", category: "social", metric: "recosAccepted", threshold: 15, icon: "🌟", name: "Influenceur ciné",         desc: "15 recos adoptées par des amis", xp: 150 }
+];
+
+const STATIC_BADGE_DEFS = [...MILESTONE_BADGE_DEFS, ...GENRE_BADGE_DEFS, ...SOCIAL_BADGE_DEFS];
+const DIRECTOR_BADGE_XP = 200;
+const COLLECTION_BADGE_XP = 180;
+const DIRECTOR_CANDIDATE_MIN_SEEN = 3;
+const COLLECTION_CANDIDATE_MIN_SEEN = 2;
 
 const app = initializeApp(FIREBASE_CONFIG);
 const db  = getFirestore(app);
@@ -94,6 +154,17 @@ const PUSH_BOUND_KEY = "letop_push_bound";
 const USER_NAME_KEY = "letop_user_name";
 const repairingProfileIds = new Set();
 const publishedProfileIds = new Set();
+
+// ─── GAMIFICATION : état ───────────────────────────────────────────
+let badgeStates = {}; // profileId -> { unlocked:{id:unlockedAt}, recosSent, recosAccepted }
+let badgeStatesSynced = false;
+const seenBadgeCountLocalKey = (profileId) => `letop_badges_seen_${profileId}`;
+const directorFilmoLocalKey = (directorId) => `letop_director_filmo_${directorId}`;
+const collectionPartsLocalKey = (collectionId) => `letop_collection_parts_${collectionId}`;
+const METADATA_CACHE_TTL = 14 * 24 * 60 * 60 * 1000; // 14 jours
+let badgeRecomputeTimer = null;
+let badgeRecomputeSeq = 0;
+const badgesResolvingProfiles = new Set();
 
 window.addEventListener("beforeinstallprompt", (event) => {
   event.preventDefault();
@@ -360,6 +431,12 @@ async function sendRecoToUser(toUserId, movie) {
     seen: false,
     createdAt: Date.now()
   });
+  if (currentUser) {
+    const priorSent = Number(badgeStates[currentUser]?.recosSent) || 0;
+    badgeStates[currentUser] = { ...(badgeStates[currentUser] || {}), recosSent: priorSent + 1 };
+    setDoc(doc(db, "badgeState", currentUser), { recosSent: increment(1), updatedAt: Date.now() }, { merge: true }).catch(() => {});
+    scheduleBadgeRecompute(200);
+  }
 
   const fromProfile = profileById(currentUser);
   const fromName = fromProfile?.name || "Quelqu'un";
@@ -384,6 +461,13 @@ function listenIncomingRecos(cb) {
     cb(all);
   }, () => cb([]));
 }
+function listenAllBadgeStates(cb) {
+  return onSnapshot(collection(db, "badgeState"), snap => {
+    const data = {};
+    snap.forEach(d => { data[d.id] = d.data(); });
+    cb(data);
+  }, () => cb({}));
+}
 async function markRecoSeen(docId) {
   await setDoc(doc(db, "sentRecos", docId), { seen: true }, { merge: true });
 }
@@ -393,12 +477,16 @@ async function dismissReco(docId) {
 function removeRecoLocally(docId) {
   incomingRecos = incomingRecos.filter(r => r.docId !== docId);
 }
-async function completeReco(docId, toastText = "") {
+async function completeReco(docId, toastText = "", outcome = null) {
   if (!docId) return;
+  const reco = incomingRecos.find(r => r.docId === docId);
   removeRecoLocally(docId);
   renderPage();
   try {
     await dismissReco(docId);
+    if (outcome === "accepted" && reco?.from) {
+      setDoc(doc(db, "badgeState", reco.from), { recosAccepted: increment(1), updatedAt: Date.now() }, { merge: true }).catch(() => {});
+    }
     if (toastText) showToast(toastText);
   } catch (e) {
     showToast("Erreur reco");
@@ -408,11 +496,11 @@ function handleRecoBannerAction(action, docId, movie) {
   if (!docId || !movie) return;
   if (action === "watchlist") {
     addToWatchlist(movie);
-    completeReco(docId);
+    completeReco(docId, "", "accepted");
   } else if (action === "watched") {
     openRatingSheet(movie, "reco", docId);
   } else if (action === "ignore") {
-    completeReco(docId, "Reco ignorée");
+    completeReco(docId, "Reco ignorée", "ignored");
   }
 }
 
@@ -920,6 +1008,13 @@ function tabIconHtml(icon) {
       <path d="M21 3v18"></path>
     </svg>`;
   }
+  if (icon === "medal") {
+    return `<svg ${common}>
+      <circle cx="12" cy="15" r="6"></circle>
+      <path d="M12 12v6"></path>
+      <path d="M8.21 13.89 7 22l5-3 5 3-1.21-8.11"></path>
+    </svg>`;
+  }
   return `<svg ${common}>
     <path class="tab-users-shoulders" d="M18 21a8 8 0 0 0-16 0"></path>
     <circle class="tab-users-main" cx="10" cy="8" r="5"></circle>
@@ -1094,6 +1189,7 @@ function renderOnboarding() {
               await ensureProfileInCloud(userId, me.name);
               await saveRankingToCloud(userId, [movie]);
               showToast(`Bienvenue ${me.name} 🎬`);
+              scheduleBadgeRecompute(1500);
             } catch (e) {
               onboardingNewUser = userId;
               showToast("Erreur d'enregistrement");
@@ -1237,6 +1333,7 @@ function renderFriendsTabContent(viewed) {
           <span>
             <strong>${escapeHtml(p.name)}</strong>
             <small>${(allRankings[p.id] || []).length} film${(allRankings[p.id] || []).length > 1 ? "s" : ""} dans son Top</small>
+            ${friendLevelChipHtml(p.id)}
           </span>
         </button>
       `).join("")}
@@ -1289,7 +1386,7 @@ function renderApp() {
           <div class="brand-title">${appLogoHtml("brand-logo", "icon")}Le Top</div>
         </div>
         <div class="header-btns">
-          <button class="icon-pill" id="btn-settings" title="Réglages">${tabIconHtml("settings")}</button>
+          <button class="icon-pill ${hasUnseenBadges() ? "has-badge-dot" : ""}" id="btn-settings" title="Réglages">${tabIconHtml("settings")}</button>
         </div>
       </div>
     </div>
@@ -1652,6 +1749,7 @@ function addToRanked(movie) {
   saveRankingToCloud(currentUser, updated).catch(() => showToast("Erreur d'enregistrement"));
   if (viewingUser === currentUser) renderRanked();
   showToast(`${movie.title} ajouté en position ${updated.length}`);
+  scheduleBadgeRecompute();
 }
 
 function openRatingSheet(movie, origin = null, recoDocId = null) {
@@ -1675,7 +1773,7 @@ function openRatingSheet(movie, origin = null, recoDocId = null) {
     btn.addEventListener("click", () => {
       addToWatched(pendingRatingMovie, parseInt(btn.dataset.rating));
       if (pendingRatingOrigin === "watchlist") removeFromWatchlist(pendingRatingMovie.id);
-      if (pendingRatingOrigin === "reco" && pendingRatingRecoDoc) completeReco(pendingRatingRecoDoc);
+      if (pendingRatingOrigin === "reco" && pendingRatingRecoDoc) completeReco(pendingRatingRecoDoc, "", "accepted");
       if (pendingRatingOrigin === "recommendation") removeRecommendedCardForMovie(pendingRatingMovie.id);
       closeRatingSheet();
     });
@@ -1699,6 +1797,7 @@ function addToWatched(movie, rating) {
   saveWatchedToCloud(currentUser, updated).catch(() => showToast("Erreur d'enregistrement"));
   renderWatchedList();
   showToast(`${movie.title} noté ${rating}/10`);
+  scheduleBadgeRecompute();
 }
 
 function removeFromWatched(movieId) {
@@ -2272,6 +2371,11 @@ function renderSettingsSheetContent() {
   const topCount = myRanked().length;
   const watchedCount = myWatched().length;
   const watchlistCount = myWatchlist().length;
+  const cached = badgeCatalogCache[currentUser];
+  const xp = cached?.xp ?? baseXpForProfile(currentUser);
+  const level = cached?.level ?? computeLevel(xp);
+  const unlockedCount = cached ? cached.badges.filter(b => b.unlocked).length : Object.keys(badgeStates[currentUser]?.unlocked || {}).length;
+  const levelPct = level.next ? Math.round(level.progress * 100) : 100;
   document.getElementById("settings-content").innerHTML = `
     <div class="settings-profile">
       ${profileAvatarHtml(currentUser, 48)}
@@ -2279,6 +2383,17 @@ function renderSettingsSheetContent() {
         <div class="settings-name">${escapeHtml(me.name)}</div>
         <div class="settings-meta">${topCount} top · ${watchedCount} vus · ${watchlistCount} à voir</div>
       </div>
+    </div>
+    <div class="badge-level-card compact">
+      <div class="badge-level-name">${escapeHtml(level.name)}</div>
+      <div class="badge-level-bar"><div class="badge-level-bar-fill" style="width:${levelPct}%"></div></div>
+      <div class="badge-level-xp">${xp} xp${level.next ? ` · encore ${level.next.min - xp} xp` : " · niveau maximum"}</div>
+    </div>
+    <div class="settings-group">
+      <button class="context-item settings-item" data-action="badges" type="button">
+        ${surfaceIconHtml("medal", "settings-icon")}
+        <span><strong>Mes badges</strong><small>${unlockedCount} débloqué${unlockedCount > 1 ? "s" : ""}</small></span>
+      </button>
     </div>
     <div class="settings-group">
       <button class="context-item settings-item" data-action="notifications" type="button">
@@ -2391,7 +2506,10 @@ async function deleteCurrentAccount() {
 }
 
 async function handleSettingsAction(action) {
-  if (action === "notifications") {
+  if (action === "badges") {
+    closeSettingsSheet();
+    openBadgesSheet();
+  } else if (action === "notifications") {
     closeSettingsSheet();
     await enablePushNotifications();
   } else if (action === "install") {
@@ -2409,6 +2527,106 @@ async function handleSettingsAction(action) {
   } else if (action === "delete-account") {
     await deleteCurrentAccount();
   }
+}
+
+// ─── GAMIFICATION : UI galerie de badges ───────────────────────────
+const BADGE_CATEGORY_LABELS = {
+  director: "Réalisateurs",
+  collection: "Sagas & franchises",
+  milestone: "Jalons",
+  genre: "Genres explorés",
+  social: "Recommandations"
+};
+const BADGE_CATEGORY_ORDER = ["director", "collection", "milestone", "genre", "social"];
+
+function unlockedBadgeCount(profileId) {
+  return Object.keys(badgeStates[profileId]?.unlocked || {}).length;
+}
+function hasUnseenBadges() {
+  if (!currentUser) return false;
+  const seen = Number(localStorage.getItem(seenBadgeCountLocalKey(currentUser))) || 0;
+  return unlockedBadgeCount(currentUser) > seen;
+}
+function markBadgesSeen() {
+  if (!currentUser) return;
+  localStorage.setItem(seenBadgeCountLocalKey(currentUser), String(unlockedBadgeCount(currentUser)));
+}
+
+function badgeTileHtml(badge) {
+  const pct = badge.threshold > 0 ? Math.min(100, Math.round((badge.current / badge.threshold) * 100)) : 0;
+  return `
+  <div class="badge-tile ${badge.unlocked ? "unlocked" : "locked"}">
+    <div class="badge-tile-icon">${badge.unlocked ? badge.icon : "🔒"}</div>
+    <div class="badge-tile-body">
+      <div class="badge-tile-name">${escapeHtml(badge.name)}</div>
+      <div class="badge-tile-desc">${escapeHtml(badge.desc)}</div>
+      ${badge.unlocked
+        ? `<div class="badge-tile-xp">+${badge.xp || 20} xp</div>`
+        : `<div class="badge-tile-progress"><div class="badge-tile-progress-fill" style="width:${pct}%"></div></div><div class="badge-tile-count">${badge.current}/${badge.threshold}</div>`}
+    </div>
+  </div>`;
+}
+
+function renderBadgesSheetContent() {
+  const wrap = document.getElementById("badges-content");
+  if (!wrap || !currentUser) return;
+  const cached = badgeCatalogCache[currentUser];
+  const xp = cached?.xp ?? baseXpForProfile(currentUser);
+  const level = cached?.level ?? computeLevel(xp);
+  const badges = cached?.badges ?? computeStaticBadgeStatus(currentUser);
+  const unlockedCount = badges.filter(b => b.unlocked).length;
+  const isResolving = badgesResolvingProfiles.has(currentUser);
+  const levelPct = level.next ? Math.round(level.progress * 100) : 100;
+
+  const levelHeader = `
+    <div class="badge-level-card">
+      <div class="badge-level-name">${escapeHtml(level.name)}</div>
+      <div class="badge-level-xp">${xp} xp${level.next ? ` · ${level.next.min - xp} xp avant « ${escapeHtml(level.next.name)} »` : " · niveau maximum"}</div>
+      <div class="badge-level-bar"><div class="badge-level-bar-fill" style="width:${levelPct}%"></div></div>
+      <div class="badge-level-count">${unlockedCount} badge${unlockedCount > 1 ? "s" : ""} débloqué${unlockedCount > 1 ? "s" : ""}${isResolving ? " · mise à jour…" : ""}</div>
+    </div>`;
+
+  const groups = BADGE_CATEGORY_ORDER.map(cat => {
+    const items = [...badges.filter(b => b.category === cat)].sort((a, b) => {
+      if (a.unlocked !== b.unlocked) return a.unlocked ? -1 : 1;
+      return (b.current / (b.threshold || 1)) - (a.current / (a.threshold || 1));
+    });
+    if (!items.length) {
+      if (cat !== "director" && cat !== "collection") return "";
+      const hint = cat === "director"
+        ? "Regarde au moins 3 films d'un même réalisateur pour faire apparaître un badge de filmographie."
+        : "Regarde au moins 2 films d'une même saga pour faire apparaître un badge.";
+      return `<div class="section-label">${BADGE_CATEGORY_LABELS[cat]}</div><div class="badge-empty-hint">${hint}</div>`;
+    }
+    return `<div class="section-label">${BADGE_CATEGORY_LABELS[cat]}</div><div class="badge-grid">${items.map(badgeTileHtml).join("")}</div>`;
+  }).join("");
+
+  wrap.innerHTML = levelHeader + groups;
+}
+
+function openBadgesSheet() {
+  markBadgesSeen();
+  renderBadgesSheetContent();
+  document.getElementById("badges-overlay").classList.add("show");
+  recomputeBadges({ silent: true }).then(() => { markBadgesSeen(); refreshBadgesSheetIfOpen(); });
+}
+function closeBadgesSheet() {
+  document.getElementById("badges-overlay").classList.remove("show");
+}
+function refreshBadgesSheetIfOpen() {
+  const overlay = document.getElementById("badges-overlay");
+  if (overlay?.classList.contains("show")) renderBadgesSheetContent();
+}
+function refreshSettingsSheetIfOpen() {
+  const overlay = document.getElementById("settings-overlay");
+  if (overlay?.classList.contains("show")) renderSettingsSheetContent();
+}
+function friendLevelChipHtml(profileId) {
+  const state = badgeStates[profileId];
+  const count = Object.keys(state?.unlocked || {}).length;
+  if (!state || (!count && !state.xp)) return "";
+  const levelName = state.levelName || computeLevel(Number(state.xp) || 0).name;
+  return `<span class="friend-level-chip">🏅 ${count} · ${escapeHtml(levelName)}</span>`;
 }
 
 function setupPwaInstallMetadata() {
@@ -2634,25 +2852,44 @@ function closeContextMenu() {
   activeContextIndex = null;
 }
 
+function movieNeedsMetadata(m) {
+  return !m.genre_ids || !m.genre_ids.length || m.keyword_ids === undefined || m.collection_id === undefined;
+}
+async function annotateMovieWithDetails(m) {
+  try {
+    const details = await getMovieDetails(m.id);
+    m.genre_ids = (details.genres || []).map(g => g.id);
+    m.keyword_ids = (details.keywords?.keywords || details.keywords?.results || []).map(k => k.id).slice(0, 8);
+    const director = (details.credits?.crew || []).find(c => c.job === "Director");
+    m.director_id = director ? director.id : null;
+    m.director_name = director ? director.name : null;
+    m.collection_id = details.belongs_to_collection?.id || null;
+    m.collection_name = details.belongs_to_collection?.name || null;
+  } catch (e) {
+    m.genre_ids = m.genre_ids || [];
+    m.keyword_ids = m.keyword_ids || [];
+    m.collection_id = m.collection_id === undefined ? null : m.collection_id;
+  }
+}
+async function runInBatches(items, worker, batchSize = 6) {
+  for (let i = 0; i < items.length; i += batchSize) {
+    await Promise.all(items.slice(i, i + batchSize).map(worker));
+  }
+}
+async function backfillMovieMetadata(list, saveFn) {
+  const missing = list.filter(movieNeedsMetadata);
+  if (!missing.length) return false;
+  await runInBatches(missing, annotateMovieWithDetails);
+  await saveFn(list).catch(() => showToast("Erreur d'enregistrement"));
+  return true;
+}
 async function ensureGenreData() {
   if (!currentUser) return;
-  const list = myRanked();
-  const missing = list.filter(m => !m.genre_ids || !m.genre_ids.length || m.keyword_ids === undefined);
-  if (!missing.length) return;
-  await Promise.all(missing.map(async (m) => {
-    try {
-      const details = await getMovieDetails(m.id);
-      m.genre_ids = (details.genres || []).map(g => g.id);
-      m.keyword_ids = (details.keywords?.keywords || details.keywords?.results || []).map(k => k.id).slice(0, 8);
-      const director = (details.credits?.crew || []).find(c => c.job === "Director");
-      m.director_id = director ? director.id : null;
-      m.director_name = director ? director.name : null;
-    } catch(e) {
-      m.genre_ids = m.genre_ids || [];
-      m.keyword_ids = m.keyword_ids || [];
-    }
-  }));
-  await saveRankingToCloud(currentUser, list).catch(() => showToast("Erreur d'enregistrement"));
+  await backfillMovieMetadata(myRanked(), list => saveRankingToCloud(currentUser, list));
+}
+async function ensureWatchedMetadata() {
+  if (!currentUser) return;
+  await backfillMovieMetadata(myWatched(), list => saveWatchedToCloud(currentUser, list));
 }
 
 // Drame (18), Comedie (35), Romance (10749) sont trop larges pour suffire seuls.
@@ -3070,6 +3307,228 @@ async function updateRecommendations() {
   }
 }
 
+// ─── GAMIFICATION : moteur de calcul des badges ────────────────────
+let badgeCatalogCache = {}; // profileId -> { badges, xp, level, resolvedAt }
+
+function getSeenMoviesForUser(profileId) {
+  const byId = new Map();
+  (allRankings[profileId] || []).forEach(m => byId.set(m.id, m));
+  (allWatched[profileId] || []).forEach(m => byId.set(m.id, { ...(byId.get(m.id) || {}), ...m }));
+  return [...byId.values()];
+}
+
+function computeLevel(xp) {
+  let current = LEVELS[0];
+  let next = null;
+  for (const lvl of LEVELS) {
+    if (xp >= lvl.min) current = lvl; else { next = lvl; break; }
+  }
+  return {
+    name: current.name,
+    min: current.min,
+    next,
+    progress: next ? Math.min(1, (xp - current.min) / (next.min - current.min)) : 1
+  };
+}
+
+function baseXpForProfile(profileId) {
+  const watchedCount = (allWatched[profileId] || []).length;
+  const rankedCount = (allRankings[profileId] || []).length;
+  const watchlistCount = (allWatchlist[profileId] || []).length;
+  const state = badgeStates[profileId] || {};
+  const recosSent = Number(state.recosSent) || 0;
+  const recosAccepted = Number(state.recosAccepted) || 0;
+  return watchedCount * 10 + rankedCount * 5 + watchlistCount * 2 + recosSent * 25 + recosAccepted * 40;
+}
+
+function computeGenreCounts(seenMovies) {
+  const counts = {};
+  seenMovies.forEach(m => (m.genre_ids || []).forEach(gid => { counts[gid] = (counts[gid] || 0) + 1; }));
+  return counts;
+}
+
+function computeStaticBadgeStatus(profileId) {
+  const seenMovies = getSeenMoviesForUser(profileId);
+  const genreCounts = computeGenreCounts(seenMovies);
+  const state = badgeStates[profileId] || {};
+  const metricValues = {
+    watched: (allWatched[profileId] || []).length,
+    ranked: (allRankings[profileId] || []).length,
+    watchlist: (allWatchlist[profileId] || []).length,
+    recosSent: Number(state.recosSent) || 0,
+    recosAccepted: Number(state.recosAccepted) || 0
+  };
+  return STATIC_BADGE_DEFS.map(def => {
+    const current = def.category === "genre" ? (genreCounts[def.gid] || 0) : (metricValues[def.metric] || 0);
+    return { ...def, current, unlocked: current >= def.threshold };
+  });
+}
+
+function directorCandidates(seenMovies) {
+  const byDirector = new Map();
+  seenMovies.forEach(m => {
+    if (!m.director_id) return;
+    if (!byDirector.has(m.director_id)) byDirector.set(m.director_id, { id: m.director_id, name: m.director_name, seenIds: new Set() });
+    byDirector.get(m.director_id).seenIds.add(Number(m.id));
+  });
+  return [...byDirector.values()].filter(d => d.seenIds.size >= DIRECTOR_CANDIDATE_MIN_SEEN);
+}
+
+function collectionCandidates(seenMovies) {
+  const byCollection = new Map();
+  seenMovies.forEach(m => {
+    if (!m.collection_id) return;
+    if (!byCollection.has(m.collection_id)) byCollection.set(m.collection_id, { id: m.collection_id, name: m.collection_name, seenIds: new Set() });
+    byCollection.get(m.collection_id).seenIds.add(Number(m.id));
+  });
+  return [...byCollection.values()].filter(c => c.seenIds.size >= COLLECTION_CANDIDATE_MIN_SEEN);
+}
+
+function readCachedIdList(key, ttl) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(key) || "null");
+    if (!raw || !Array.isArray(raw.ids) || Date.now() - (raw.checkedAt || 0) > ttl) return null;
+    return raw;
+  } catch (e) { return null; }
+}
+function writeCachedIdList(key, data) {
+  try { localStorage.setItem(key, JSON.stringify({ ...data, checkedAt: Date.now() })); } catch (e) {}
+}
+
+// Une seule requête par réalisateur/saga, mise en cache 14 jours : les sorties
+// futures ne débloquent pas un badge qu'on ne peut pas encore avoir vu.
+async function fetchDirectorFilmography(directorId, fallbackName) {
+  const cached = readCachedIdList(directorFilmoLocalKey(directorId), METADATA_CACHE_TTL);
+  if (cached) return cached;
+  try {
+    const data = await tmdbFetch(`/person/${directorId}/movie_credits`);
+    const today = new Date().toISOString().slice(0, 10);
+    const ids = [...new Set((data.crew || [])
+      .filter(c => c.job === "Director" && c.release_date && c.release_date <= today)
+      .map(c => c.id))];
+    const result = { ids, name: fallbackName };
+    writeCachedIdList(directorFilmoLocalKey(directorId), result);
+    return result;
+  } catch (e) {
+    return { ids: null, name: fallbackName };
+  }
+}
+async function fetchCollectionParts(collectionId, fallbackName) {
+  const cached = readCachedIdList(collectionPartsLocalKey(collectionId), METADATA_CACHE_TTL);
+  if (cached) return cached;
+  try {
+    const data = await tmdbFetch(`/collection/${collectionId}`);
+    const today = new Date().toISOString().slice(0, 10);
+    const ids = [...new Set((data.parts || [])
+      .filter(p => p.release_date && p.release_date <= today)
+      .map(p => p.id))];
+    const result = { ids, name: data.name || fallbackName };
+    writeCachedIdList(collectionPartsLocalKey(collectionId), result);
+    return result;
+  } catch (e) {
+    return { ids: null, name: fallbackName };
+  }
+}
+
+async function computeDynamicBadgeStatus(seenMovies) {
+  const seenIds = new Set(seenMovies.map(m => Number(m.id)));
+  const directors = directorCandidates(seenMovies);
+  const collections = collectionCandidates(seenMovies);
+
+  const directorBadges = await Promise.all(directors.map(async d => {
+    const filmo = await fetchDirectorFilmography(d.id, d.name);
+    if (!filmo.ids) return null;
+    const total = filmo.ids.length || d.seenIds.size;
+    const current = filmo.ids.filter(id => seenIds.has(Number(id))).length;
+    return {
+      id: `director-${d.id}`, category: "director", icon: "🎬",
+      name: `Filmographie complète : ${d.name}`,
+      desc: `${current}/${total} films de ${d.name} vus`,
+      xp: DIRECTOR_BADGE_XP, current, threshold: total,
+      unlocked: total > 0 && current >= total
+    };
+  }));
+
+  const collectionBadges = await Promise.all(collections.map(async c => {
+    const parts = await fetchCollectionParts(c.id, c.name);
+    if (!parts.ids) return null;
+    const name = parts.name || c.name;
+    const total = parts.ids.length || c.seenIds.size;
+    const current = parts.ids.filter(id => seenIds.has(Number(id))).length;
+    return {
+      id: `collection-${c.id}`, category: "collection", icon: "🌌",
+      name: `Saga complète : ${name}`,
+      desc: `${current}/${total} films de la saga vus`,
+      xp: COLLECTION_BADGE_XP, current, threshold: total,
+      unlocked: total > 0 && current >= total
+    };
+  }));
+
+  return [...directorBadges, ...collectionBadges].filter(Boolean);
+}
+
+async function recomputeBadges(options = {}) {
+  const profileId = currentUser;
+  if (!profileId) return null;
+  const silent = options.silent === true;
+  const seq = ++badgeRecomputeSeq;
+  badgesResolvingProfiles.add(profileId);
+  try {
+    await Promise.all([ensureGenreData(), ensureWatchedMetadata()]);
+    if (seq !== badgeRecomputeSeq || profileId !== currentUser) return null;
+
+    const seenMovies = getSeenMoviesForUser(profileId);
+    const staticBadges = computeStaticBadgeStatus(profileId);
+    const dynamicBadges = await computeDynamicBadgeStatus(seenMovies);
+    if (seq !== badgeRecomputeSeq || profileId !== currentUser) return null;
+
+    const allBadges = [...staticBadges, ...dynamicBadges];
+    const unlockedNow = allBadges.filter(b => b.unlocked).map(b => b.id);
+    const previouslyUnlocked = badgeStates[profileId]?.unlocked || {};
+    const newlyUnlocked = unlockedNow.filter(id => !previouslyUnlocked[id]);
+
+    const xp = baseXpForProfile(profileId) + allBadges.reduce((sum, b) => b.unlocked ? sum + (b.xp || 20) : sum, 0);
+    const level = computeLevel(xp);
+    badgeCatalogCache[profileId] = { badges: allBadges, xp, level, resolvedAt: Date.now() };
+
+    if (newlyUnlocked.length) {
+      const nextUnlocked = { ...previouslyUnlocked };
+      newlyUnlocked.forEach(id => { nextUnlocked[id] = Date.now(); });
+      badgeStates[profileId] = { ...(badgeStates[profileId] || {}), unlocked: nextUnlocked };
+      try {
+        await setDoc(doc(db, "badgeState", profileId), {
+          unlocked: nextUnlocked, xp, levelName: level.name, updatedAt: Date.now()
+        }, { merge: true });
+      } catch (e) {}
+      if (!silent) celebrateNewBadges(newlyUnlocked.map(id => allBadges.find(b => b.id === id)).filter(Boolean));
+    } else {
+      try {
+        await setDoc(doc(db, "badgeState", profileId), { xp, levelName: level.name, updatedAt: Date.now() }, { merge: true });
+      } catch (e) {}
+    }
+    return badgeCatalogCache[profileId];
+  } finally {
+    badgesResolvingProfiles.delete(profileId);
+  }
+}
+
+function scheduleBadgeRecompute(delay = 600) {
+  if (!currentUser) return;
+  clearTimeout(badgeRecomputeTimer);
+  badgeRecomputeTimer = setTimeout(() => { recomputeBadges().then(() => refreshBadgesSheetIfOpen()); }, delay);
+}
+
+function celebrateNewBadges(badges) {
+  if (!badges.length) return;
+  badges.forEach((badge, i) => {
+    setTimeout(() => {
+      showToast(`🏅 Badge débloqué : ${badge.name}`);
+      const origin = document.getElementById("btn-settings");
+      if (origin) fireConfetti(origin);
+    }, i * 1400);
+  });
+}
+
 function renderRecentFeed() {
   const el = document.getElementById("recent-list");
   if (!el) return;
@@ -3186,6 +3645,10 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target.id === "settings-overlay") closeSettingsSheet();
   });
   document.getElementById("btn-close-settings").addEventListener("click", closeSettingsSheet);
+  document.getElementById("badges-overlay").addEventListener("click", (e) => {
+    if (e.target.id === "badges-overlay") closeBadgesSheet();
+  });
+  document.getElementById("btn-close-badges").addEventListener("click", closeBadgesSheet);
   document.getElementById("rating-overlay").addEventListener("click", (e) => {
     if (e.target.id === "rating-overlay") closeRatingSheet();
   });
@@ -3258,14 +3721,18 @@ document.addEventListener("DOMContentLoaded", () => {
     if (profilesSynced && rankingsSynced && currentUser && !onboardingNewUser) renderPage();
   });
   listenAllRankings(data => {
+    const previousMine = allRankings[currentUser];
     allRankings = data;
     rankingsSynced = true;
     renderPage();
+    if (currentUser && data[currentUser] !== previousMine) scheduleBadgeRecompute(1000);
   });
   listenAllWatched(data => {
+    const previousMine = allWatched[currentUser];
     allWatched = data;
     if (profilesSynced && rankingsSynced && currentUser && activeTab === "watched") renderWatchedList();
     if (profilesSynced && rankingsSynced && currentUser && activeTab === "search" && recentExpanded) renderRecentFeed();
+    if (currentUser && data[currentUser] !== previousMine) scheduleBadgeRecompute(1000);
   });
   listenAllWatchlist(data => {
     allWatchlist = data;
@@ -3274,6 +3741,13 @@ document.addEventListener("DOMContentLoaded", () => {
   listenIncomingRecos(data => {
     incomingRecos = data;
     if (profilesSynced && rankingsSynced && currentUser && !onboardingNewUser) renderPage();
+  });
+  listenAllBadgeStates(data => {
+    badgeStates = data;
+    badgeStatesSynced = true;
+    if (currentUser && profilesSynced && rankingsSynced && !onboardingNewUser) scheduleBadgeRecompute(50);
+    refreshBadgesSheetIfOpen();
+    refreshSettingsSheetIfOpen();
   });
 });
 </script>
@@ -3460,12 +3934,16 @@ body.no-page-scroll #root {
   box-shadow: 4px 4px 8px var(--shadow-d), -4px -4px 8px var(--shadow-l);
   display: flex; align-items: center; justify-content: center; font-size: 15px;
   transition: all 0.15s cubic-bezier(.2,.8,.2,1); cursor: pointer;
-  color: var(--lav-deep);
+  color: var(--lav-deep); position: relative;
 }
 .icon-pill .tab-svg { width: 20px; height: 20px; }
 .icon-pill:active {
   box-shadow: inset 3px 3px 6px var(--shadow-d), inset -3px -3px 6px var(--shadow-l);
   transform: scale(0.94);
+}
+.icon-pill.has-badge-dot::after {
+  content: ""; position: absolute; top: 4px; right: 4px; width: 10px; height: 10px;
+  border-radius: 50%; background: var(--pink); box-shadow: 0 0 0 2px var(--card);
 }
 
 .tab-content { padding-bottom: 24px; animation: tab-content-in 0.22s ease; }
@@ -3567,6 +4045,7 @@ body.no-page-scroll #root {
 .friend-card span:not(.avatar-initial-sm) { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .friend-card strong { font-size: 14px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .friend-card small { font-size: 11px; color: var(--ink-soft); font-weight: 700; line-height: 1.25; }
+.friend-level-chip { font-size: 10px; font-weight: 800; color: var(--gold-deep); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .search-wrap { padding: 16px 0 4px; }
 .search-box {
@@ -3863,6 +4342,45 @@ body.no-page-scroll #root {
 .settings-icon .tab-svg { width: 19px; height: 19px; }
 .settings-item.danger .settings-icon { color: #d64668; }
 .settings-item.danger small, .settings-item.danger strong { color: #d64668; }
+
+/* ═══════════════ GAMIFICATION : badges & XP ═══════════════ */
+.badge-level-card {
+  background: linear-gradient(120deg, rgba(201,184,255,0.28), rgba(255,217,160,0.28));
+  border-radius: 18px; padding: 14px 16px; margin: 0 4px 14px;
+  box-shadow: inset 3px 3px 8px rgba(180,170,220,0.14), inset -3px -3px 8px rgba(255,255,255,0.7);
+}
+.badge-level-card.compact { padding: 10px 14px; margin: 0 4px 12px; }
+.badge-level-name { font-size: 15px; font-weight: 800; }
+.badge-level-xp { font-size: 11px; font-weight: 700; color: var(--ink-soft); margin-top: 2px; }
+.badge-level-bar {
+  height: 8px; border-radius: 999px; background: rgba(154,147,184,0.18); margin-top: 8px; overflow: hidden;
+}
+.badge-level-bar-fill {
+  height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--lav), var(--pink));
+  transition: width 0.4s cubic-bezier(.2,.8,.2,1);
+}
+.badge-level-count { font-size: 11px; font-weight: 700; color: var(--ink-soft); margin-top: 8px; }
+.badge-empty-hint {
+  padding: 12px 16px; margin: 0 4px 14px; font-size: 12px; font-weight: 600; color: var(--ink-soft);
+  background: rgba(246,244,252,0.78); border-radius: 16px;
+}
+.badge-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px; padding: 0 4px 16px;
+}
+.badge-tile {
+  display: flex; gap: 9px; align-items: flex-start; padding: 11px; border-radius: 16px;
+  background: var(--card); box-shadow: 4px 4px 10px var(--shadow-d), -4px -4px 10px var(--shadow-l);
+}
+.badge-tile.locked { opacity: 0.62; }
+.badge-tile-icon { font-size: 20px; line-height: 1; flex-shrink: 0; }
+.badge-tile-body { min-width: 0; }
+.badge-tile-name { font-size: 12px; font-weight: 800; line-height: 1.25; }
+.badge-tile-desc { font-size: 10.5px; font-weight: 600; color: var(--ink-soft); margin-top: 2px; line-height: 1.3; }
+.badge-tile-xp { font-size: 10px; font-weight: 800; color: var(--gold-deep); margin-top: 6px; }
+.badge-tile-progress { height: 5px; border-radius: 999px; background: rgba(154,147,184,0.18); margin-top: 7px; overflow: hidden; }
+.badge-tile-progress-fill { height: 100%; border-radius: 999px; background: var(--lav); }
+.badge-tile-count { font-size: 9.5px; font-weight: 700; color: var(--ink-faint); margin-top: 4px; }
 .rating-subtitle { font-family: 'DM Mono', monospace; color: var(--ink-soft); font-size: 11px; margin-top: 3px; }
 .rating-options { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; padding: 0 6px 12px; }
 .rating-choice {
@@ -3963,6 +4481,15 @@ body.no-page-scroll #root {
     <div class="install-title">Réglages</div>
     <div id="settings-content"></div>
     <button class="btn-secondary" id="btn-close-settings">Fermer</button>
+  </div>
+</div>
+
+<div class="context-overlay" id="badges-overlay">
+  <div class="context-sheet settings-sheet">
+    <div class="context-handle"></div>
+    <div class="install-title">Mes badges</div>
+    <div id="badges-content"></div>
+    <button class="btn-secondary" id="btn-close-badges">Fermer</button>
   </div>
 </div>
 
