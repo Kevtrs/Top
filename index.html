@@ -9,9 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Le Top 🍿</title>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260703-reco-no-seen">
-<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260703-reco-no-seen">
-<link rel="manifest" href="./site.webmanifest?v=20260703-reco-no-seen">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260704-badges-cinema-v2">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260704-badges-cinema-v2">
+<link rel="manifest" href="./site.webmanifest?v=20260704-badges-cinema-v2">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -38,7 +38,7 @@ const PROFILE_COLORS = [
 const TMDB_IMG = "https://image.tmdb.org/t/p/w342";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260703-reco-no-seen";
+const PWA_VERSION = "20260704-badges-cinema-v2";
 const APP_PUBLIC_URL = "https://kevtrs.github.io/Top/";
 
 const APP_TABS = [
@@ -48,6 +48,73 @@ const APP_TABS = [
   { id: "watchlist", label: "À voir", icon: "popcorn", color: "var(--sky)" },
   { id: "friends", label: "Amis", icon: "users", color: "var(--lav)" }
 ];
+
+const CINEMA_CHALLENGE_DEFS = [
+  {
+    id: "night-owl",
+    art: "horror",
+    name: "Nuit blanche",
+    description: "Explore les films qui font vraiment frissonner.",
+    targetLabel: "8 films d'horreur vus",
+    threshold: 8,
+    genreIds: [27]
+  },
+  {
+    id: "perfect-crime",
+    art: "crime",
+    name: "Crime parfait",
+    description: "Enquêtes, braquages et thrillers sous tension.",
+    targetLabel: "8 polars ou thrillers vus",
+    threshold: 8,
+    genreIds: [80, 53]
+  },
+  {
+    id: "beyond-stars",
+    art: "scifi",
+    name: "Au-delà des étoiles",
+    description: "Voyage dans le temps, l'espace et les futurs possibles.",
+    targetLabel: "8 films de science-fiction vus",
+    threshold: 8,
+    genreIds: [878]
+  },
+  {
+    id: "time-machine",
+    art: "classic",
+    name: "Machine à remonter le temps",
+    description: "Découvre les films qui ont construit le cinéma.",
+    targetLabel: "5 films sortis avant 1980",
+    threshold: 5,
+    beforeYear: 1980
+  },
+  {
+    id: "animated-worlds",
+    art: "animation",
+    name: "Mondes animés",
+    description: "Du dessin traditionnel aux univers les plus modernes.",
+    targetLabel: "6 films d'animation vus",
+    threshold: 6,
+    genreIds: [16]
+  },
+  {
+    id: "family-cut",
+    art: "social",
+    name: "Tous d'accord",
+    description: "Un même film vu par toute la famille.",
+    targetLabel: "1 film partagé par tout le groupe",
+    threshold: 1,
+    social: true
+  }
+];
+
+const DIRECTOR_CHALLENGE_OVERRIDES = {
+  138: {
+    name: "100% Tarantino",
+    movieIds: [500, 680, 184, 24, 393, 1991, 16869, 68718, 273248, 466272]
+  }
+};
+
+let challengeMetadataLoading = false;
+let challengeFilmographyLoading = null;
 
 const app = initializeApp(FIREBASE_CONFIG);
 const db  = getFirestore(app);
@@ -476,7 +543,14 @@ function simplifyMovie(m) {
   return {
     id: m.id, title: m.title, poster_path: m.poster_path,
     release_date: m.release_date, vote_average: m.vote_average,
-    genre_ids: m.genre_ids || [], addedAt: Date.now()
+    genre_ids: m.genre_ids || [], keyword_ids: m.keyword_ids || [],
+    original_language: m.original_language || null,
+    director_id: m.director_id || m._directorId || null,
+    director_name: m.director_name || m._directorName || null,
+    collection_id: m.collection_id || null,
+    collection_name: m.collection_name || null,
+    challenge_meta_at: Number(m.challenge_meta_at) || 0,
+    addedAt: Date.now()
   };
 }
 function getAllMovieIdsForUser(userId) {
@@ -485,6 +559,279 @@ function getAllMovieIdsForUser(userId) {
     ...(allWatched[userId] || []),
     ...(allWatchlist[userId] || [])
   ].map(m => Number(m.id)).filter(Boolean));
+}
+
+function challengeActiveKey(profileId) {
+  return `letop_active_challenge_${profileId}`;
+}
+function challengeUnlocksKey(profileId) {
+  return `letop_unlocked_challenges_${profileId}`;
+}
+function challengeFilmographyKey(directorId) {
+  return `letop_director_films_${directorId}`;
+}
+function challengeSeenMovies(profileId = currentUser) {
+  const merged = new Map();
+  [...(allRankings[profileId] || []), ...(allWatched[profileId] || [])].forEach(movie => {
+    const id = Number(movie?.id);
+    if (!id) return;
+    const existing = merged.get(id) || {};
+    merged.set(id, {
+      ...existing,
+      ...movie,
+      genre_ids: (movie.genre_ids || []).length ? movie.genre_ids : (existing.genre_ids || []),
+      keyword_ids: (movie.keyword_ids || []).length ? movie.keyword_ids : (existing.keyword_ids || [])
+    });
+  });
+  return [...merged.values()];
+}
+function challengeMovieMap(profileId) {
+  return new Map(challengeSeenMovies(profileId).map(movie => [Number(movie.id), movie]));
+}
+function groupChallengeState() {
+  const profileIds = [...new Set([currentUser, ...allKnownProfiles().map(profile => profile.id)].filter(Boolean))];
+  if (profileIds.length < 2) return { current: 0, candidates: [], available: false };
+
+  const maps = profileIds.map(challengeMovieMap);
+  const sharedIds = [...maps[0].keys()].filter(id => maps.every(map => map.has(id)));
+  const myIds = maps[profileIds.indexOf(currentUser)] || new Map();
+  const otherMaps = profileIds.filter(id => id !== currentUser).map(challengeMovieMap);
+  const candidates = otherMaps.length
+    ? [...otherMaps[0].entries()]
+        .filter(([id]) => !myIds.has(id) && otherMaps.every(map => map.has(id)))
+        .map(([, movie]) => movie)
+    : [];
+  return { current: sharedIds.length, candidates, available: true };
+}
+function preferredDirectorFromSeen(seenMovies) {
+  const directors = new Map();
+  seenMovies.forEach(movie => {
+    const id = Number(movie.director_id);
+    if (!id || !movie.director_name) return;
+    const entry = directors.get(id) || { id, name: movie.director_name, count: 0 };
+    entry.count += 1;
+    directors.set(id, entry);
+  });
+  return [...directors.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))[0] || null;
+}
+function loadDirectorFilmography(directorId) {
+  try {
+    const cached = JSON.parse(localStorage.getItem(challengeFilmographyKey(directorId)) || "null");
+    if (!cached || !Array.isArray(cached.movies)) return null;
+    return cached;
+  } catch (e) {
+    return null;
+  }
+}
+async function ensureDirectorFilmography(director) {
+  if (!director?.id || challengeFilmographyLoading === director.id) return;
+  const cached = loadDirectorFilmography(director.id);
+  const override = DIRECTOR_CHALLENGE_OVERRIDES[director.id];
+  const maxAge = 14 * 24 * 60 * 60 * 1000;
+  const cachedIds = new Set((cached?.movies || []).map(movie => Number(movie.id)));
+  const overrideIsCurrent = !override || override.movieIds.every(id => cachedIds.has(Number(id))) && cachedIds.size === override.movieIds.length;
+  if (cached && overrideIsCurrent && Date.now() - (Number(cached.updatedAt) || 0) < maxAge) return;
+
+  challengeFilmographyLoading = director.id;
+  try {
+    const data = await tmdbFetch(`/person/${director.id}/movie_credits`);
+    const today = new Date().toISOString().slice(0, 10);
+    const unique = new Map();
+    (data.crew || [])
+      .filter(movie => movie.job === "Director" && movie.release_date && movie.release_date <= today)
+      .filter(movie => movie.poster_path && Number(movie.vote_count || 0) >= 50 && !movie.adult)
+      .forEach(movie => unique.set(Number(movie.id), movie));
+    const movies = (override
+      ? override.movieIds.map(id => unique.get(Number(id))).filter(Boolean)
+      : [...unique.values()]
+          .filter(movie => Number(movie.vote_count || 0) >= 300)
+          .slice(0, 12)
+    ).sort((a, b) => String(a.release_date).localeCompare(String(b.release_date)));
+    localStorage.setItem(challengeFilmographyKey(director.id), JSON.stringify({
+      name: director.name,
+      movies,
+      updatedAt: Date.now()
+    }));
+    if (activeTab === "search") renderPage();
+  } catch (e) {
+    // The director challenge remains usable with a five-film target when TMDB is unavailable.
+  } finally {
+    challengeFilmographyLoading = null;
+  }
+}
+function baseChallengeMatchesMovie(movie, challenge) {
+  if (!movie || !challenge) return false;
+  if ((challenge.movieIds || []).includes(Number(movie.id))) return true;
+  if (challenge.genreIds?.length && (movie.genre_ids || []).some(id => challenge.genreIds.includes(Number(id)))) return true;
+  if (challenge.beforeYear) {
+    const year = Number(String(movie.release_date || "").slice(0, 4));
+    return year > 0 && year < challenge.beforeYear;
+  }
+  if (challenge.directorId && Number(movie.director_id || movie._directorId) === Number(challenge.directorId)) return true;
+  return false;
+}
+function cinemaChallengeCatalog() {
+  const seenMovies = challengeSeenMovies();
+  const groupState = groupChallengeState();
+  const base = CINEMA_CHALLENGE_DEFS.map(def => {
+    const current = def.social
+      ? groupState.current
+      : seenMovies.filter(movie => baseChallengeMatchesMovie(movie, def)).length;
+    return {
+      ...def,
+      current,
+      available: def.social ? groupState.available : true,
+      suggestedMovies: def.social ? groupState.candidates : [],
+      completed: current >= def.threshold
+    };
+  });
+
+  const director = preferredDirectorFromSeen(seenMovies);
+  if (director) {
+    const cached = loadDirectorFilmography(director.id);
+    const override = DIRECTOR_CHALLENGE_OVERRIDES[director.id];
+    const cachedMovies = cached?.movies || [];
+    const filmography = override
+      ? override.movieIds.map(id => cachedMovies.find(movie => Number(movie.id) === Number(id))).filter(Boolean)
+      : cachedMovies;
+    const movieIds = filmography.map(movie => Number(movie.id));
+    const current = override && filmography.length
+      ? seenMovies.filter(movie => movieIds.includes(Number(movie.id))).length
+      : director.count;
+    const threshold = override ? override.movieIds.length : 5;
+    const shortName = director.name.trim().split(/\s+/).slice(-1)[0];
+    base.unshift({
+      id: `director-${director.id}`,
+      art: "director",
+      name: override?.name || `Signature ${shortName}`,
+      description: override ? "Complète ses dix longs métrages principaux." : "Explore sa mise en scène film après film.",
+      targetLabel: override ? `${threshold} films principaux` : "5 films du même réalisateur",
+      threshold,
+      current,
+      directorId: director.id,
+      directorName: director.name,
+      movieIds,
+      suggestedMovies: filmography.filter(movie => !getAllMovieIdsForUser(currentUser).has(Number(movie.id))),
+      available: true,
+      completed: current >= threshold
+    });
+  }
+  return base;
+}
+function challengeProgress(challenge) {
+  return challenge?.threshold ? Math.min(1, challenge.current / challenge.threshold) : 0;
+}
+function activeCinemaChallenge() {
+  const catalog = cinemaChallengeCatalog();
+  const selectable = catalog.filter(challenge => challenge.available && !challenge.completed);
+  const savedId = currentUser ? localStorage.getItem(challengeActiveKey(currentUser)) : null;
+  const saved = selectable.find(challenge => challenge.id === savedId);
+  if (saved) return saved;
+  return [...selectable].sort((a, b) => challengeProgress(b) - challengeProgress(a))[0] || catalog[0] || null;
+}
+function setActiveCinemaChallenge(challengeId) {
+  if (!currentUser) return;
+  localStorage.setItem(challengeActiveKey(currentUser), challengeId);
+}
+function challengeMatchesMovie(movie, challenge) {
+  if (!challenge || challenge.completed) return false;
+  if ((movie?._challengeIds || []).includes(challenge.id)) return true;
+  return baseChallengeMatchesMovie(movie, challenge);
+}
+function challengeBadgeArtHtml(challenge, extraClass = "") {
+  const art = challenge?.art || "classic";
+  const common = `class="cinema-badge-art art-${art} ${extraClass}" viewBox="0 0 96 96" role="img" aria-label="${escapeAttr(challenge?.name || "Badge cinéma")}"`;
+  if (art === "horror") return `<svg ${common}><path class="badge-back" d="M48 5 82 22v37c0 17-14 27-34 32C28 86 14 76 14 59V22Z"/><path class="badge-light" d="M58 20a23 23 0 1 0 18 38A28 28 0 1 1 58 20Z"/><path class="badge-hot" d="M31 55c8-8 26-8 34 0-10 12-24 12-34 0Z"/><circle class="badge-back" cx="41" cy="54" r="3"/><circle class="badge-back" cx="55" cy="54" r="3"/></svg>`;
+  if (art === "crime") return `<svg ${common}><path class="badge-back" d="M18 18h60v60H18z"/><path class="badge-light" d="M30 27h36v42H30z"/><path class="badge-hot" d="M48 32c-10 0-16 8-16 18 0 8 4 14 9 18M48 38c-7 0-10 5-10 12 0 6 3 11 7 14M48 44c-3 0-5 3-5 7 0 4 2 7 5 9M48 32c10 0 16 8 16 18 0 8-4 14-9 18M48 38c7 0 10 5 10 12 0 6-3 11-7 14M48 44c3 0 5 3 5 7 0 4-2 7-5 9" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/></svg>`;
+  if (art === "scifi") return `<svg ${common}><circle class="badge-back" cx="48" cy="48" r="39"/><circle class="badge-light" cx="48" cy="48" r="20"/><path class="badge-hot" d="M13 55c15 8 47 5 70-9-7 17-48 30-70 9Z"/><circle class="badge-light" cx="71" cy="23" r="4"/><circle class="badge-hot" cx="25" cy="27" r="3"/></svg>`;
+  if (art === "animation") return `<svg ${common}><path class="badge-back" d="M13 21h70v54H13z"/><path class="badge-light" d="M21 29h54v38H21z"/><circle class="badge-hot" cx="38" cy="46" r="12"/><path class="badge-back" d="m49 61 10-23 12 23Z"/><path class="badge-hot" d="M17 17h12v8H17zm25 0h12v8H42zm25 0h12v8H67zM17 71h12v8H17zm25 0h12v8H42zm25 0h12v8H67z"/></svg>`;
+  if (art === "social") return `<svg ${common}><path class="badge-back" d="M11 17h74v48H11z"/><path class="badge-light" d="M20 26h56v30H20z"/><circle class="badge-hot" cx="48" cy="44" r="11"/><circle class="badge-back" cx="29" cy="75" r="8"/><circle class="badge-back" cx="48" cy="75" r="8"/><circle class="badge-back" cx="67" cy="75" r="8"/></svg>`;
+  if (art === "director") return `<svg ${common}><path class="badge-back" d="M14 29h68v48H14z"/><path class="badge-light" d="M14 19h68v18H14z"/><path class="badge-hot" d="m20 19 12 18m4-18 12 18m4-18 12 18m4-18 12 18"/><path class="badge-light" d="M28 57c9-15 15 11 24-4 5-8 8 10 17 1" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg>`;
+  return `<svg ${common}><circle class="badge-back" cx="48" cy="48" r="39"/><circle class="badge-light" cx="48" cy="48" r="25"/><circle class="badge-hot" cx="48" cy="48" r="7"/><circle class="badge-back" cx="48" cy="34" r="5"/><circle class="badge-back" cx="61" cy="48" r="5"/><circle class="badge-back" cx="48" cy="62" r="5"/><circle class="badge-back" cx="35" cy="48" r="5"/></svg>`;
+}
+function renderChallengeSpotlightHtml() {
+  const active = activeCinemaChallenge();
+  if (!active) return "";
+  const percent = Math.round(challengeProgress(active) * 100);
+  const remaining = Math.max(0, active.threshold - active.current);
+  return `
+    <section class="cinema-challenge-section">
+      <div class="cinema-challenge-heading">
+        <div><span>Défis cinéma</span><small>Choisis ce que tu veux débloquer</small></div>
+        <button id="btn-open-challenges" type="button">Collection</button>
+      </div>
+      <article class="cinema-challenge-featured" data-challenge-id="${escapeAttr(active.id)}">
+        <div class="cinema-challenge-art">${challengeBadgeArtHtml(active)}</div>
+        <div class="cinema-challenge-copy">
+          <div class="cinema-challenge-kicker">Objectif du moment</div>
+          <h3>${escapeHtml(active.name)}</h3>
+          <p>${escapeHtml(remaining === 1 ? "Encore un film pour le débloquer." : `${remaining} films avant de le débloquer.`)}</p>
+          <div class="cinema-challenge-progress"><span style="width:${percent}%"></span></div>
+          <div class="cinema-challenge-count">${active.current} / ${active.threshold} · ${escapeHtml(active.targetLabel)}</div>
+        </div>
+        <button class="cinema-challenge-cta" id="btn-challenge-movies" type="button">Voir les films</button>
+      </article>
+    </section>`;
+}
+function renderChallengesSheet() {
+  const gallery = document.getElementById("cinema-challenge-gallery");
+  if (!gallery) return;
+  const active = activeCinemaChallenge();
+  const catalog = cinemaChallengeCatalog();
+  gallery.innerHTML = catalog.map(challenge => {
+    const percent = Math.round(challengeProgress(challenge) * 100);
+    const selected = active?.id === challenge.id;
+    return `
+      <button class="cinema-challenge-tile ${challenge.completed ? "completed" : ""} ${selected ? "selected" : ""}" data-challenge-id="${escapeAttr(challenge.id)}" type="button" ${!challenge.available ? "disabled" : ""}>
+        <div class="cinema-challenge-tile-art">${challengeBadgeArtHtml(challenge)}</div>
+        <div class="cinema-challenge-tile-copy">
+          <strong>${escapeHtml(challenge.name)}</strong>
+          <span>${escapeHtml(challenge.description)}</span>
+          <div class="cinema-challenge-progress"><i style="width:${percent}%"></i></div>
+          <small>${challenge.completed ? "Débloqué" : `${challenge.current} / ${challenge.threshold}`}${selected ? " · objectif actif" : ""}</small>
+        </div>
+      </button>`;
+  }).join("");
+  gallery.querySelectorAll(".cinema-challenge-tile:not([disabled])").forEach(button => {
+    button.addEventListener("click", () => {
+      const chosen = catalog.find(challenge => challenge.id === button.dataset.challengeId);
+      if (!chosen || chosen.completed) return;
+      setActiveCinemaChallenge(chosen.id);
+      closeChallengesSheet();
+      recoExpanded = true;
+      renderPage();
+      showToast(`${chosen.name} devient ton objectif`);
+      setTimeout(() => document.getElementById("reco-accordion-header")?.scrollIntoView({ behavior: "smooth", block: "center" }), 80);
+    });
+  });
+}
+function openChallengesSheet() {
+  renderChallengesSheet();
+  document.getElementById("cinema-challenges-overlay")?.classList.add("show");
+  scheduleScrollLockUpdate();
+}
+function closeChallengesSheet() {
+  document.getElementById("cinema-challenges-overlay")?.classList.remove("show");
+  scheduleScrollLockUpdate();
+}
+function announceNewChallengeUnlocks() {
+  if (!currentUser) return;
+  const key = challengeUnlocksKey(currentUser);
+  const completed = cinemaChallengeCatalog().filter(challenge => challenge.completed).map(challenge => challenge.id);
+  const stored = localStorage.getItem(key);
+  if (stored === null) {
+    localStorage.setItem(key, JSON.stringify(completed));
+    return;
+  }
+  let known = [];
+  try { known = JSON.parse(stored) || []; } catch (e) {}
+  const fresh = completed.filter(id => !known.includes(id));
+  if (!fresh.length) return;
+  localStorage.setItem(key, JSON.stringify([...new Set([...known, ...completed])]));
+  const challenge = cinemaChallengeCatalog().find(item => item.id === fresh[0]);
+  showToast(`Badge débloqué : ${challenge?.name || "Défi cinéma"}`);
+  const origin = document.querySelector(".brand-logo") || document.body;
+  fireConfetti(origin);
 }
 function recoPrefsLocalKey(userId) {
   return `letop_reco_prefs_${userId}`;
@@ -1163,6 +1510,8 @@ function renderSearchTabContent(myIncoming) {
       <button class="quick-home-card" data-go-tab="friends" type="button">${surfaceIconHtml("users", "quick-home-icon")}<strong>Amis</strong><small>Leurs tops</small></button>
     </div>
 
+    ${renderChallengeSpotlightHtml()}
+
     <div class="accordion-section">
       <div class="accordion-header" id="reco-accordion-header">
         <div class="accordion-left">
@@ -1303,6 +1652,7 @@ function renderApp() {
 
   attachAppEvents();
   renderActiveTabView();
+  setTimeout(announceNewChallengeUnlocks, 80);
 
 }
 
@@ -1341,6 +1691,7 @@ function renderPage() {
 
 function renderActiveTabView() {
   if (activeTab === "search") {
+    ensureChallengeMetadata();
     if (recoExpanded) updateRecommendations();
     if (recentExpanded) renderRecentFeed();
   } else if (activeTab === "watched") {
@@ -1415,6 +1766,13 @@ function attachAppEvents() {
       if (activeTab !== "friends") viewingUser = currentUser;
       renderPage();
     });
+  });
+  document.getElementById("btn-open-challenges")?.addEventListener("click", openChallengesSheet);
+  document.getElementById("btn-challenge-movies")?.addEventListener("click", () => {
+    recoExpanded = true;
+    toggleAccordion("reco", true);
+    updateRecommendations();
+    setTimeout(() => document.getElementById("reco-accordion-header")?.scrollIntoView({ behavior: "smooth", block: "center" }), 60);
   });
 
   document.getElementById("btn-reset")?.addEventListener("click", () => {
@@ -2647,12 +3005,82 @@ async function ensureGenreData() {
       const director = (details.credits?.crew || []).find(c => c.job === "Director");
       m.director_id = director ? director.id : null;
       m.director_name = director ? director.name : null;
+      m.original_language = details.original_language || null;
+      m.collection_id = details.belongs_to_collection?.id || null;
+      m.collection_name = details.belongs_to_collection?.name || null;
+      m.challenge_meta_at = Date.now();
     } catch(e) {
       m.genre_ids = m.genre_ids || [];
       m.keyword_ids = m.keyword_ids || [];
     }
   }));
   await saveRankingToCloud(currentUser, list).catch(() => showToast("Erreur d'enregistrement"));
+}
+
+async function ensureChallengeMetadata() {
+  if (!currentUser || challengeMetadataLoading) return;
+  const ranked = myRanked();
+  const watched = myWatched();
+  const all = [...ranked, ...watched];
+  const missingById = new Map();
+  all.forEach(movie => {
+    if (!movie?.id || Number(movie.challenge_meta_at) > 0) return;
+    missingById.set(Number(movie.id), movie);
+  });
+  const queue = [...missingById.values()].slice(0, 16);
+  if (!queue.length) {
+    const director = preferredDirectorFromSeen(challengeSeenMovies());
+    if (director) ensureDirectorFilmography(director);
+    return;
+  }
+
+  challengeMetadataLoading = true;
+  const metadata = new Map();
+  try {
+    await Promise.all(queue.map(async movie => {
+      try {
+        const details = await getMovieDetails(movie.id);
+        const director = (details.credits?.crew || []).find(person => person.job === "Director");
+        metadata.set(Number(movie.id), {
+          genre_ids: (details.genres || []).map(genre => Number(genre.id)),
+          keyword_ids: (details.keywords?.keywords || details.keywords?.results || []).map(keyword => Number(keyword.id)).slice(0, 8),
+          original_language: details.original_language || null,
+          director_id: director?.id || null,
+          director_name: director?.name || null,
+          collection_id: details.belongs_to_collection?.id || null,
+          collection_name: details.belongs_to_collection?.name || null,
+          challenge_meta_at: Date.now()
+        });
+      } catch (e) {
+        metadata.set(Number(movie.id), { challenge_meta_at: Date.now() });
+      }
+    }));
+
+    const applyMetadata = list => {
+      let changed = false;
+      list.forEach(movie => {
+        const next = metadata.get(Number(movie.id));
+        if (!next) return;
+        Object.assign(movie, next);
+        changed = true;
+      });
+      return changed;
+    };
+    const rankedChanged = applyMetadata(ranked);
+    const watchedChanged = applyMetadata(watched);
+    await Promise.all([
+      rankedChanged ? saveRankingToCloud(currentUser, ranked) : Promise.resolve(),
+      watchedChanged ? saveWatchedToCloud(currentUser, watched) : Promise.resolve()
+    ]);
+
+    const director = preferredDirectorFromSeen(challengeSeenMovies());
+    if (director) await ensureDirectorFilmography(director);
+  } catch (e) {
+    // Badges keep their basic genre progress when metadata enrichment fails.
+  } finally {
+    challengeMetadataLoading = false;
+    if (missingById.size > queue.length) setTimeout(ensureChallengeMetadata, 900);
+  }
 }
 
 // Drame (18), Comedie (35), Romance (10749) sont trop larges pour suffire seuls.
@@ -2739,15 +3167,15 @@ function pickRecommendationSources(list, genreWeights) {
   return selected.slice(0, 7);
 }
 
-function shouldKeepRecommendationCandidate(candidate, knownIds, ignoredIds, genreWeights, sourceWeight = 0) {
+function shouldKeepRecommendationCandidate(candidate, knownIds, ignoredIds, genreWeights, sourceWeight = 0, challengeMatch = false) {
   const candidateId = Number(candidate?.id);
   if (!candidateId || knownIds.has(candidateId) || ignoredIds.has(candidateId)) return false;
   if (!candidate.poster_path) return false;
   const genres = candidate.genre_ids || [];
   const matchedGenres = genres.filter(gid => genreWeights[gid] > 0);
-  if (!matchedGenres.length) return false;
+  if (!matchedGenres.length && !challengeMatch) return false;
   const hasSpecificGenreMatch = matchedGenres.some(gid => !GENERIC_GENRE_IDS.has(gid));
-  if (!hasSpecificGenreMatch && sourceWeight < 3) return false;
+  if (!hasSpecificGenreMatch && sourceWeight < 3 && !challengeMatch) return false;
   const voteCount = Number(candidate.vote_count) || 0;
   const voteAverage = Number(candidate.vote_average) || 0;
   return voteCount >= 60 || voteAverage >= 7.3;
@@ -2755,13 +3183,14 @@ function shouldKeepRecommendationCandidate(candidate, knownIds, ignoredIds, genr
 
 function scoreCandidate(candidate, genreWeights, prefs = recoPrefs) {
   const genres = candidate.genre_ids || [];
-  if (!genres.length) return -999;
+  const challengeBoost = Number(candidate._challengeBoost) || 0;
+  if (!genres.length && !challengeBoost) return -999;
   const matchedGenres = genres.filter(gid => genreWeights[gid] > 0);
-  if (!matchedGenres.length) return -999;
+  if (!matchedGenres.length && !challengeBoost) return -999;
   const hasSpecificGenreMatch = matchedGenres.some(gid => !GENERIC_GENRE_IDS.has(gid));
 
   const likedWeight = matchedGenres.reduce((sum, gid) => sum + (genreWeights[gid] || 0), 0);
-  const coverage = matchedGenres.length / genres.length;
+  const coverage = matchedGenres.length / Math.max(genres.length, 1);
   const dislikedPenalty = genres.reduce((sum, gid) => sum + (Number(prefs.dislikedGenreWeights?.[gid]) || 0), 0);
   const voteAverage = Number(candidate.vote_average) || 0;
   const voteCount = Number(candidate.vote_count) || 0;
@@ -2778,10 +3207,11 @@ function scoreCandidate(candidate, genreWeights, prefs = recoPrefs) {
   score += voteConfidence * 2.2;
   score += sourceBoost * 1.6;
   score += crossBoost * 2.3;
+  score += challengeBoost;
   score -= dislikedPenalty * 7;
   score -= mainstreamPenalty;
-  if (!hasSpecificGenreMatch && sourceBoost < 3) score -= 14;
-  if (coverage < 0.34) score -= 9;
+  if (!hasSpecificGenreMatch && sourceBoost < 3 && !challengeBoost) score -= 14;
+  if (coverage < 0.34 && !challengeBoost) score -= 9;
   if (voteCount < 80) score -= 4;
   return score;
 }
@@ -2820,16 +3250,19 @@ function mergeRecommendationCandidate(map, movie, meta = {}) {
   if (existing) {
     existing._sourceWeight = Math.max(existing._sourceWeight || 0, sourceWeight);
     if (meta.because && !(existing._because || []).includes(meta.because)) existing._because.push(meta.because);
+    if (meta.challengeId && !(existing._challengeIds || []).includes(meta.challengeId)) existing._challengeIds.push(meta.challengeId);
     return;
   }
   map.set(movie.id, {
     ...movie,
     _sourceWeight: sourceWeight,
-    _because: meta.because ? [meta.because] : []
+    _because: meta.because ? [meta.because] : [],
+    _challengeIds: meta.challengeId ? [meta.challengeId] : []
   });
 }
 
 function recommendationReason(movie) {
+  if (movie._challengeName) return `Avance vers ${movie._challengeName}`;
   if (movie._crossReason) return movie._crossReason;
   const reason = movie._because?.[0];
   if (reason) return `Proche de ${reason}`;
@@ -2896,6 +3329,49 @@ async function ignoreRecommendedMovie(movie, card = null) {
   await persistIgnoredMovie(movie, dislikedGenreWeights, "Je l'enlève des recos");
 }
 
+function challengeRecommendationJobs(challenge) {
+  if (!challenge || challenge.completed) return [];
+  const jobs = [];
+  if (challenge.suggestedMovies?.length) {
+    jobs.push(Promise.resolve(challenge.suggestedMovies.map(movie => ({
+      movie: challenge.directorId
+        ? { ...movie, _directorId: challenge.directorId, _directorName: challenge.directorName }
+        : movie,
+      meta: { challengeId: challenge.id, sourceWeight: 7.4 }
+    }))));
+  }
+  if (challenge.genreIds?.length) {
+    [1, 2].forEach(page => {
+      jobs.push(discoverMoviesByGenres(challenge.genreIds, {
+        genreOperator: "or",
+        "vote_count.gte": "800",
+        "vote_average.gte": "6.3",
+        sort_by: "vote_count.desc",
+        page
+      }).then(list => list.map(movie => ({
+        movie,
+        meta: { challengeId: challenge.id, sourceWeight: 6.8 }
+      }))).catch(() => []));
+    });
+  } else if (challenge.beforeYear) {
+    [1, 2].forEach(page => {
+      jobs.push(tmdbFetch("/discover/movie", {
+        include_adult: "false",
+        include_video: "false",
+        "primary_release_date.lte": `${challenge.beforeYear - 1}-12-31`,
+        "vote_count.gte": "600",
+        "vote_average.gte": "6.5",
+        sort_by: "vote_count.desc",
+        page
+      }).then(data => (data.results || []).map(movie => ({
+        movie,
+        meta: { challengeId: challenge.id, sourceWeight: 6.8 }
+      }))).catch(() => []));
+    });
+  }
+  return jobs;
+}
+
 async function updateRecommendations() {
   const scroll = document.getElementById("reco-scroll");
   if (!scroll) return;
@@ -2918,6 +3394,7 @@ async function updateRecommendations() {
     const keywordWeights = computeKeywordWeights(freshList);
     const favoriteDirectors = computeFavoriteDirectors(freshList);
     const topKeywords = topWeightedIds(keywordWeights, 6);
+    const activeChallenge = activeCinemaChallenge();
 
     const sources = pickRecommendationSources(freshList, genreWeights);
     const strongGenres = topGenreIds(genreWeights, 4);
@@ -2939,7 +3416,7 @@ async function updateRecommendations() {
         return [];
       }
     });
-    const discoverJobs = [];
+    const discoverJobs = challengeRecommendationJobs(activeChallenge);
     if (strongGenres.length >= 2) {
       [1, 2].forEach(page => {
         discoverJobs.push(discoverMoviesByGenres(strongGenres.slice(0, 2), {
@@ -2998,8 +3475,9 @@ async function updateRecommendations() {
 
     const merged = new Map();
     results.flat().forEach(({ movie, meta }) => {
-      if (shouldKeepRecommendationCandidate(movie, knownIds, ignoredIds, genreWeights, meta.sourceWeight || 0)) {
-        mergeRecommendationCandidate(merged, movie, meta);
+      const challengeMatch = !!activeChallenge && (meta.challengeId === activeChallenge.id || challengeMatchesMovie(movie, activeChallenge));
+      if (shouldKeepRecommendationCandidate(movie, knownIds, ignoredIds, genreWeights, meta.sourceWeight || 0, challengeMatch)) {
+        mergeRecommendationCandidate(merged, movie, challengeMatch ? { ...meta, challengeId: activeChallenge.id } : meta);
       }
     });
 
@@ -3007,7 +3485,12 @@ async function updateRecommendations() {
     const candidates = [...merged.values()].map(m => {
       const cb = crossBoostMap.get(Number(m.id)) || 0;
       const cr = crossReasonMap.get(Number(m.id));
-      return cb ? { ...m, _crossBoost: cb, _crossReason: cr?.text } : m;
+      const challengeMatch = !!activeChallenge && challengeMatchesMovie(m, activeChallenge);
+      return {
+        ...m,
+        ...(cb ? { _crossBoost: cb, _crossReason: cr?.text } : {}),
+        ...(challengeMatch ? { _challengeBoost: 28, _challengeName: activeChallenge.name } : {})
+      };
     });
     let scored = sortRecommendationCandidates(candidates, genreWeights, recoPrefs, 8);
     if (scored.length < 6) {
@@ -3186,6 +3669,10 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target.id === "settings-overlay") closeSettingsSheet();
   });
   document.getElementById("btn-close-settings").addEventListener("click", closeSettingsSheet);
+  document.getElementById("cinema-challenges-overlay").addEventListener("click", (e) => {
+    if (e.target.id === "cinema-challenges-overlay") closeChallengesSheet();
+  });
+  document.getElementById("btn-close-challenges").addEventListener("click", closeChallengesSheet);
   document.getElementById("rating-overlay").addEventListener("click", (e) => {
     if (e.target.id === "rating-overlay") closeRatingSheet();
   });
@@ -3605,6 +4092,94 @@ body.no-page-scroll #root {
 .quick-home-card strong { font-size: 14px; font-weight: 800; line-height: 1.1; }
 .quick-home-card small { color: var(--ink-soft); font-size: 10px; font-weight: 700; line-height: 1.15; }
 
+.cinema-challenge-section { margin: 24px 20px 4px; }
+.cinema-challenge-heading {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; margin-bottom: 10px;
+}
+.cinema-challenge-heading > div { min-width: 0; }
+.cinema-challenge-heading span { display: block; font-size: 16px; font-weight: 800; line-height: 1.1; }
+.cinema-challenge-heading small { display: block; color: var(--ink-soft); font-size: 10.5px; font-weight: 700; margin-top: 3px; }
+.cinema-challenge-heading button {
+  border: none; background: transparent; color: var(--lav-deep); font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 11px; font-weight: 800; padding: 7px 0 3px; flex-shrink: 0;
+}
+.cinema-challenge-featured {
+  display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 13px; align-items: center;
+  padding: 14px; border-radius: 20px; background: var(--card); position: relative; overflow: hidden;
+  box-shadow: 5px 5px 14px var(--shadow-d), -5px -5px 14px var(--shadow-l);
+}
+.cinema-challenge-featured::after {
+  content: ""; position: absolute; width: 130px; height: 130px; right: -58px; bottom: -78px;
+  border-radius: 50%; background: rgba(255,217,160,0.18); pointer-events: none;
+}
+.cinema-challenge-art { width: 82px; height: 82px; position: relative; z-index: 1; }
+.cinema-badge-art { display: block; width: 100%; height: 100%; filter: drop-shadow(0 7px 8px rgba(45,42,61,0.14)); }
+.cinema-badge-art .badge-back { fill: var(--badge-back); }
+.cinema-badge-art .badge-light { fill: var(--badge-light); }
+.cinema-badge-art .badge-hot { fill: var(--badge-hot); }
+.cinema-badge-art.art-horror { --badge-back:#39304F; --badge-light:#FFF0BE; --badge-hot:#F58FB7; color:#39304F; }
+.cinema-badge-art.art-crime { --badge-back:#F2C465; --badge-light:#FFF8E8; --badge-hot:#C87621; color:#C87621; }
+.cinema-badge-art.art-crime .badge-hot { fill: none; stroke: var(--badge-hot); }
+.cinema-badge-art.art-scifi { --badge-back:#6F72B9; --badge-light:#DDF8F2; --badge-hot:#F1A6C5; color:#6F72B9; }
+.cinema-badge-art.art-classic { --badge-back:#53B9AA; --badge-light:#E8FFF9; --badge-hot:#FFD27F; color:#23786D; }
+.cinema-badge-art.art-animation { --badge-back:#EF9EBD; --badge-light:#FFF4FA; --badge-hot:#FFD06B; color:#8D3E63; }
+.cinema-badge-art.art-social { --badge-back:#6B55A5; --badge-light:#F8F3FF; --badge-hot:#83D8C7; color:#6B55A5; }
+.cinema-badge-art.art-director { --badge-back:#4E416C; --badge-light:#FFF3D1; --badge-hot:#E9A0C1; color:#B85E88; }
+.cinema-badge-art.art-director .badge-hot { fill: none; stroke: var(--badge-hot); }
+.cinema-challenge-copy { min-width: 0; position: relative; z-index: 1; }
+.cinema-challenge-kicker {
+  color: var(--lav-deep); font-family: 'DM Mono', monospace; font-size: 9px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .5px; margin-bottom: 3px;
+}
+.cinema-challenge-copy h3 { font-size: 18px; font-weight: 800; line-height: 1.12; }
+.cinema-challenge-copy p { color: var(--ink-soft); font-size: 11px; line-height: 1.35; font-weight: 700; margin-top: 4px; }
+.cinema-challenge-progress {
+  height: 7px; border-radius: 999px; overflow: hidden; background: rgba(154,147,184,0.16); margin-top: 10px;
+  box-shadow: inset 2px 2px 4px rgba(180,170,220,0.22), inset -2px -2px 4px rgba(255,255,255,0.7);
+}
+.cinema-challenge-progress span,
+.cinema-challenge-progress i {
+  display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--lav), var(--pink));
+  transition: width .35s cubic-bezier(.2,.8,.2,1);
+}
+.cinema-challenge-count { color: var(--ink-soft); font-family: 'DM Mono', monospace; font-size: 8.8px; font-weight: 700; margin-top: 5px; }
+.cinema-challenge-cta {
+  grid-column: 2; justify-self: start; border: none; border-radius: 12px; padding: 9px 12px;
+  background: var(--lav); color: white; font-family: 'Plus Jakarta Sans', sans-serif; font-size: 11px; font-weight: 800;
+  position: relative; z-index: 1; box-shadow: 3px 3px 8px rgba(122,90,31,0.08);
+}
+.cinema-challenge-cta:active { transform: scale(.96); }
+
+.cinema-challenges-sheet { padding-left: 18px; padding-right: 18px; }
+.cinema-challenges-sheet-heading { padding: 0 2px 12px; }
+.cinema-challenges-sheet-heading .install-title { margin: 0; text-align: left; }
+.cinema-challenges-sheet-heading p { color: var(--ink-soft); font-size: 12px; line-height: 1.45; font-weight: 600; margin-top: 4px; }
+#cinema-challenge-gallery { display: flex; flex-direction: column; gap: 10px; padding: 2px 0 8px; }
+.cinema-challenge-tile {
+  width: 100%; display: grid; grid-template-columns: 68px minmax(0,1fr); gap: 12px; align-items: center;
+  border: none; border-radius: 18px; padding: 11px; text-align: left; color: var(--ink);
+  background: var(--card); font-family: 'Plus Jakarta Sans', sans-serif;
+  box-shadow: 4px 4px 10px var(--shadow-d), -4px -4px 10px var(--shadow-l);
+  transition: transform .12s, box-shadow .12s;
+}
+.cinema-challenge-tile:active { transform: scale(.98); }
+.cinema-challenge-tile.selected { box-shadow: inset 0 0 0 2px var(--lav), 4px 4px 10px var(--shadow-d), -4px -4px 10px var(--shadow-l); }
+.cinema-challenge-tile.completed { background: linear-gradient(120deg, rgba(255,255,255,.96), rgba(255,217,160,.28)); }
+.cinema-challenge-tile:disabled { opacity: .48; }
+.cinema-challenge-tile-art { width: 68px; height: 68px; }
+.cinema-challenge-tile-copy { min-width: 0; }
+.cinema-challenge-tile-copy strong { display: block; font-size: 13px; font-weight: 800; line-height: 1.2; }
+.cinema-challenge-tile-copy > span { display: block; color: var(--ink-soft); font-size: 10.5px; line-height: 1.3; font-weight: 650; margin-top: 2px; }
+.cinema-challenge-tile-copy .cinema-challenge-progress { margin-top: 7px; height: 5px; }
+.cinema-challenge-tile-copy small { display: block; color: var(--lav-deep); font-size: 9.5px; font-weight: 800; margin-top: 4px; }
+
+@media (max-width: 390px) {
+  .cinema-challenge-featured { grid-template-columns: 72px minmax(0, 1fr); gap: 11px; padding: 12px; }
+  .cinema-challenge-art { width: 72px; height: 72px; }
+  .cinema-challenge-copy h3 { font-size: 16px; }
+  .cinema-challenge-cta { grid-column: 1 / -1; width: 100%; }
+}
+
 .search-results { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 16px 20px; }
 .poster-pick {
   position: relative; border-radius: 16px; overflow: hidden; cursor: pointer; background: var(--card);
@@ -3948,7 +4523,7 @@ body.no-page-scroll #root {
 <div class="context-overlay" id="install-overlay">
   <div class="context-sheet">
     <div class="context-handle"></div>
-    <img class="install-logo" src="./letop-icon-192.png?v=20260703-reco-no-seen" alt="Le Top">
+    <img class="install-logo" src="./letop-icon-192.png?v=20260704-badges-cinema-v2" alt="Le Top">
     <div class="install-title" id="install-title">Installer Le Top</div>
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
@@ -3963,6 +4538,20 @@ body.no-page-scroll #root {
     <div class="install-title">Réglages</div>
     <div id="settings-content"></div>
     <button class="btn-secondary" id="btn-close-settings">Fermer</button>
+  </div>
+</div>
+
+<div class="context-overlay" id="cinema-challenges-overlay">
+  <div class="context-sheet cinema-challenges-sheet">
+    <div class="context-handle"></div>
+    <div class="cinema-challenges-sheet-heading">
+      <div>
+        <div class="install-title">Défis cinéma</div>
+        <p>Choisis un objectif : les recommandations t'aideront à le terminer.</p>
+      </div>
+    </div>
+    <div id="cinema-challenge-gallery"></div>
+    <button class="btn-secondary" id="btn-close-challenges" type="button">Fermer</button>
   </div>
 </div>
 
