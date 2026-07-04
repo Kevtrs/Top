@@ -46,6 +46,7 @@ const APP_TABS = [
   { id: "top", label: "Top", icon: "crown", color: "var(--gold)" },
   { id: "watched", label: "Vus", icon: "ticket", color: "var(--mint)" },
   { id: "watchlist", label: "À voir", icon: "popcorn", color: "var(--sky)" },
+  { id: "badges", label: "Badges", icon: "medal", color: "var(--pink)" },
   { id: "friends", label: "Amis", icon: "users", color: "var(--lav)" }
 ];
 
@@ -1163,7 +1164,7 @@ function renderTabBar() {
     <menu class="app-tabbar">
       ${APP_TABS.map(tab => `
         <button class="app-tab-item ${activeTab === tab.id ? "active" : ""}" data-tab="${tab.id}" style="--tab-color:${tab.color}" type="button">
-          <span class="app-tab-icon">${tabIconHtml(tab.icon)}</span>
+          <span class="app-tab-icon">${tabIconHtml(tab.icon)}${tab.id === "badges" && hasUnseenBadges() ? '<span class="tab-badge-dot"></span>' : ""}</span>
           <strong class="app-tab-text ${activeTab === tab.id ? "active" : ""}">${tab.label}</strong>
         </button>
       `).join("")}
@@ -1477,6 +1478,7 @@ function renderActiveTabContent(viewed, myIncoming) {
   if (activeTab === "search") return renderSearchTabContent(myIncoming);
   if (activeTab === "watched") return renderWatchedTabContent();
   if (activeTab === "watchlist") return renderWatchlistTabContent();
+  if (activeTab === "badges") return renderBadgesTabContent();
   if (activeTab === "friends") return renderFriendsTabContent(viewed);
   return renderTopTabContent();
 }
@@ -1517,7 +1519,7 @@ function renderApp() {
           <div class="brand-title">${appLogoHtml("brand-logo", "icon")}Le Top</div>
         </div>
         <div class="header-btns">
-          <button class="icon-pill ${hasUnseenBadges() ? "has-badge-dot" : ""}" id="btn-settings" title="Réglages">${tabIconHtml("settings")}</button>
+          <button class="icon-pill" id="btn-settings" title="Réglages">${tabIconHtml("settings")}</button>
         </div>
       </div>
     </div>
@@ -1575,6 +1577,8 @@ function renderActiveTabView() {
     renderWatchedList();
   } else if (activeTab === "watchlist") {
     renderWatchlist();
+  } else if (activeTab === "badges") {
+    openBadgesTab();
   } else if (activeTab === "top" || activeTab === "friends") {
     renderRanked();
   }
@@ -2505,7 +2509,6 @@ function renderSettingsSheetContent() {
   const cached = badgeCatalogCache[currentUser];
   const xp = cached?.xp ?? baseXpForProfile(currentUser);
   const level = cached?.level ?? computeLevel(xp);
-  const unlockedCount = cached ? cached.badges.filter(b => b.unlocked).length : Object.keys(badgeStates[currentUser]?.unlocked || {}).length;
   const levelPct = level.next ? Math.round(level.progress * 100) : 100;
   document.getElementById("settings-content").innerHTML = `
     <div class="settings-profile">
@@ -2519,12 +2522,6 @@ function renderSettingsSheetContent() {
       <div class="badge-level-name">${escapeHtml(level.name)}</div>
       <div class="badge-level-bar"><div class="badge-level-bar-fill" style="width:${levelPct}%"></div></div>
       <div class="badge-level-xp">${xp} xp${level.next ? ` · encore ${level.next.min - xp} xp` : " · niveau maximum"}</div>
-    </div>
-    <div class="settings-group">
-      <button class="context-item settings-item" data-action="badges" type="button">
-        ${surfaceIconHtml("medal", "settings-icon")}
-        <span><strong>Mes badges</strong><small>${unlockedCount} débloqué${unlockedCount > 1 ? "s" : ""}</small></span>
-      </button>
     </div>
     <div class="settings-group">
       <button class="context-item settings-item" data-action="notifications" type="button">
@@ -2637,10 +2634,7 @@ async function deleteCurrentAccount() {
 }
 
 async function handleSettingsAction(action) {
-  if (action === "badges") {
-    closeSettingsSheet();
-    openBadgesSheet();
-  } else if (action === "notifications") {
+  if (action === "notifications") {
     closeSettingsSheet();
     await enablePushNotifications();
   } else if (action === "install") {
@@ -2702,8 +2696,11 @@ function badgeTileHtml(badge) {
   </div>`;
 }
 
-function renderBadgesSheetContent() {
-  const wrap = document.getElementById("badges-content");
+function renderBadgesTabContent() {
+  return `<div id="badges-tab-body"></div>`;
+}
+function renderBadgesTabBody() {
+  const wrap = document.getElementById("badges-tab-body");
   if (!wrap || !currentUser) return;
   const cached = badgeCatalogCache[currentUser];
   const xp = cached?.xp ?? baseXpForProfile(currentUser);
@@ -2738,19 +2735,13 @@ function renderBadgesSheetContent() {
 
   wrap.innerHTML = levelHeader + groups;
 }
-
-function openBadgesSheet() {
+function openBadgesTab() {
   markBadgesSeen();
-  renderBadgesSheetContent();
-  document.getElementById("badges-overlay").classList.add("show");
-  recomputeBadges({ silent: true }).then(() => { markBadgesSeen(); refreshBadgesSheetIfOpen(); });
+  renderBadgesTabBody();
+  recomputeBadges({ silent: true }).then(() => { markBadgesSeen(); refreshBadgesTabIfActive(); });
 }
-function closeBadgesSheet() {
-  document.getElementById("badges-overlay").classList.remove("show");
-}
-function refreshBadgesSheetIfOpen() {
-  const overlay = document.getElementById("badges-overlay");
-  if (overlay?.classList.contains("show")) renderBadgesSheetContent();
+function refreshBadgesTabIfActive() {
+  if (activeTab === "badges") renderBadgesTabBody();
 }
 function refreshSettingsSheetIfOpen() {
   const overlay = document.getElementById("settings-overlay");
@@ -3650,7 +3641,7 @@ async function recomputeBadges(options = {}) {
 function scheduleBadgeRecompute(delay = 600) {
   if (!currentUser) return;
   clearTimeout(badgeRecomputeTimer);
-  badgeRecomputeTimer = setTimeout(() => { recomputeBadges().then(() => refreshBadgesSheetIfOpen()); }, delay);
+  badgeRecomputeTimer = setTimeout(() => { recomputeBadges().then(() => refreshBadgesTabIfActive()); }, delay);
 }
 
 function celebrateNewBadges(badges) {
@@ -3780,10 +3771,6 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target.id === "settings-overlay") closeSettingsSheet();
   });
   document.getElementById("btn-close-settings").addEventListener("click", closeSettingsSheet);
-  document.getElementById("badges-overlay").addEventListener("click", (e) => {
-    if (e.target.id === "badges-overlay") closeBadgesSheet();
-  });
-  document.getElementById("btn-close-badges").addEventListener("click", closeBadgesSheet);
   document.getElementById("rating-overlay").addEventListener("click", (e) => {
     if (e.target.id === "rating-overlay") closeRatingSheet();
   });
@@ -3881,7 +3868,7 @@ document.addEventListener("DOMContentLoaded", () => {
     badgeStates = data;
     badgeStatesSynced = true;
     if (currentUser && profilesSynced && rankingsSynced && !onboardingNewUser) scheduleBadgeRecompute(50);
-    refreshBadgesSheetIfOpen();
+    refreshBadgesTabIfActive();
     refreshSettingsSheetIfOpen();
   });
 });
@@ -4076,10 +4063,6 @@ body.no-page-scroll #root {
   box-shadow: inset 3px 3px 6px var(--shadow-d), inset -3px -3px 6px var(--shadow-l);
   transform: scale(0.94);
 }
-.icon-pill.has-badge-dot::after {
-  content: ""; position: absolute; top: 4px; right: 4px; width: 10px; height: 10px;
-  border-radius: 50%; background: var(--pink); box-shadow: 0 0 0 2px var(--card);
-}
 
 .tab-content { padding-bottom: 24px; animation: tab-content-in 0.22s ease; }
 @keyframes tab-content-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
@@ -4126,6 +4109,10 @@ body.no-page-scroll #root {
   position: absolute; left: 1.45em; top: 50%;
   transform: translateY(-50%);
 }
+.tab-badge-dot {
+  position: absolute; top: 0.1em; right: 0.1em; width: 0.7em; height: 0.7em;
+  border-radius: 50%; background: var(--pink); box-shadow: 0 0 0 0.2em var(--card);
+}
 .app-tab-text {
   position: absolute; left: 4.85em; top: 50%; max-width: calc(100% - 5.2em);
   font-size: 1.22em; font-weight: 800; letter-spacing: 0;
@@ -4140,6 +4127,7 @@ body.no-page-scroll #root {
 .app-tab-item.active[data-tab="watched"] .tab-svg { animation: tab-ticket-snap 0.7s ease; }
 .app-tab-item.active[data-tab="watchlist"] .tab-popcorn-kernels { animation: tab-popcorn-pop 0.75s ease; }
 .app-tab-item.active[data-tab="friends"] .tab-users-side { animation: tab-users-slide 0.65s ease; }
+.app-tab-item.active[data-tab="badges"] .tab-svg { animation: tab-crown-pop 0.7s cubic-bezier(.34,1.56,.64,1); }
 @keyframes tab-search-pulse { 0%,100% { transform: scale(1); } 42% { transform: scale(0.86); } 70% { transform: scale(1.08); } }
 @keyframes tab-search-line { 0%,100% { transform: rotate(0deg); } 45% { transform: rotate(-14deg) translate(-1px, 1px); } }
 @keyframes tab-crown-pop { 0% { transform: translateY(0) scale(1); } 35% { transform: translateY(-4px) scale(1.08); } 70% { transform: translateY(2px) scale(0.96); } 100% { transform: translateY(0) scale(1); } }
@@ -4628,14 +4616,6 @@ body.no-page-scroll #root {
   </div>
 </div>
 
-<div class="context-overlay" id="badges-overlay">
-  <div class="context-sheet settings-sheet">
-    <div class="context-handle"></div>
-    <div class="install-title">Mes badges</div>
-    <div id="badges-content"></div>
-    <button class="btn-secondary" id="btn-close-badges">Fermer</button>
-  </div>
-</div>
 
 <div class="context-overlay" id="rating-overlay">
   <div class="context-sheet">
