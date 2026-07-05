@@ -9,9 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Le Top 🍿</title>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260705-badges-tab-v2">
-<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260705-badges-tab-v2">
-<link rel="manifest" href="./site.webmanifest?v=20260705-badges-tab-v2">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260705-photo-badges-v3">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260705-photo-badges-v3">
+<link rel="manifest" href="./site.webmanifest?v=20260705-photo-badges-v3">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -37,9 +37,10 @@ const PROFILE_COLORS = [
 
 const TMDB_IMG = "https://image.tmdb.org/t/p/w342";
 const TMDB_BACKDROP = "https://image.tmdb.org/t/p/w500";
+const TMDB_PROFILE = "https://image.tmdb.org/t/p/w185";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260705-badges-tab-v2";
+const PWA_VERSION = "20260705-photo-badges-v3";
 const APP_PUBLIC_URL = "https://kevtrs.github.io/Top/";
 
 const APP_TABS = [
@@ -59,7 +60,11 @@ const CINEMA_CHALLENGE_DEFS = [
     description: "Explore les films qui font vraiment frissonner.",
     targetLabel: "8 films d'horreur vus",
     threshold: 8,
-    genreIds: [27]
+    genreIds: [27],
+    badgePhoto: "./badge-assets/moon.jpg",
+    badgeIcon: "./badge-assets/moon-stars.svg",
+    badgeShape: "genre",
+    badgePosition: "50% 50%"
   },
   {
     id: "perfect-crime",
@@ -68,7 +73,11 @@ const CINEMA_CHALLENGE_DEFS = [
     description: "Enquêtes, braquages et thrillers sous tension.",
     targetLabel: "8 polars ou thrillers vus",
     threshold: 8,
-    genreIds: [80, 53]
+    genreIds: [80, 53],
+    badgePhoto: "./badge-assets/paper.jpg",
+    badgeIcon: "./badge-assets/building-bank.svg",
+    badgeShape: "genre",
+    badgePosition: "50% 52%"
   },
   {
     id: "beyond-stars",
@@ -77,7 +86,11 @@ const CINEMA_CHALLENGE_DEFS = [
     description: "Voyage dans le temps, l'espace et les futurs possibles.",
     targetLabel: "8 films de science-fiction vus",
     threshold: 8,
-    genreIds: [878]
+    genreIds: [878],
+    badgePhoto: "./badge-assets/space.jpg",
+    badgeIcon: "./badge-assets/rocket.svg",
+    badgeShape: "genre",
+    badgePosition: "50% 50%"
   },
   {
     id: "time-machine",
@@ -86,7 +99,11 @@ const CINEMA_CHALLENGE_DEFS = [
     description: "Découvre les films qui ont construit le cinéma.",
     targetLabel: "5 films sortis avant 1980",
     threshold: 5,
-    beforeYear: 1980
+    beforeYear: 1980,
+    badgePhoto: "./badge-assets/reel.jpg",
+    badgeIcon: "./badge-assets/clock.svg",
+    badgeShape: "explore",
+    badgePosition: "50% 43%"
   },
   {
     id: "animated-worlds",
@@ -95,7 +112,11 @@ const CINEMA_CHALLENGE_DEFS = [
     description: "Du dessin traditionnel aux univers les plus modernes.",
     targetLabel: "6 films d'animation vus",
     threshold: 6,
-    genreIds: [16]
+    genreIds: [16],
+    badgePhoto: "./badge-assets/artist.jpg",
+    badgeIcon: "./badge-assets/brush.svg",
+    badgeShape: "genre",
+    badgePosition: "50% 48%"
   },
   {
     id: "family-cut",
@@ -104,7 +125,11 @@ const CINEMA_CHALLENGE_DEFS = [
     description: "Un même film vu par toute la famille.",
     targetLabel: "1 film partagé par tout le groupe",
     threshold: 1,
-    social: true
+    social: true,
+    badgePhoto: "./badge-assets/audience.jpg",
+    badgeIcon: "./badge-assets/users-group.svg",
+    badgeShape: "family",
+    badgePosition: "50% 46%"
   }
 ];
 
@@ -262,6 +287,13 @@ const DIRECTOR_CHALLENGE_OVERRIDES = {
     name: "100% Tarantino",
     movieIds: [500, 680, 184, 24, 393, 1991, 16869, 68718, 273248, 466272]
   }
+};
+
+const DIRECTOR_BADGE_ASSETS = {
+  138: { photo: "./badge-assets/director-tarantino.jpg", position: "50% 17%" },
+  608: { photo: "./badge-assets/director-miyazaki.jpg", position: "50% 12%" },
+  525: { photo: "./badge-assets/director-nolan.jpg", position: "50% 10%" },
+  1032: { photo: "./badge-assets/director-scorsese.jpg", position: "45% 15%" }
 };
 
 let challengeMetadataLoading = false;
@@ -812,11 +844,15 @@ async function ensureDirectorFilmography(director) {
   const maxAge = 14 * 24 * 60 * 60 * 1000;
   const cachedIds = new Set((cached?.movies || []).map(movie => Number(movie.id)));
   const overrideIsCurrent = !override || override.movieIds.every(id => cachedIds.has(Number(id))) && cachedIds.size === override.movieIds.length;
-  if (cached && overrideIsCurrent && Date.now() - (Number(cached.updatedAt) || 0) < maxAge) return;
+  const portraitIsCurrent = !!DIRECTOR_BADGE_ASSETS[director.id] || cached?.portraitChecked === true;
+  if (cached && overrideIsCurrent && portraitIsCurrent && Date.now() - (Number(cached.updatedAt) || 0) < maxAge) return;
 
   challengeFilmographyLoading = director.id;
   try {
-    const data = await tmdbFetch(`/person/${director.id}/movie_credits`);
+    const [data, person] = await Promise.all([
+      tmdbFetch(`/person/${director.id}/movie_credits`),
+      tmdbFetch(`/person/${director.id}`).catch(() => null)
+    ]);
     const today = new Date().toISOString().slice(0, 10);
     const unique = new Map();
     (data.crew || [])
@@ -832,9 +868,11 @@ async function ensureDirectorFilmography(director) {
     localStorage.setItem(challengeFilmographyKey(director.id), JSON.stringify({
       name: director.name,
       movies,
+      profilePath: person?.profile_path || cached?.profilePath || null,
+      portraitChecked: true,
       updatedAt: Date.now()
     }));
-    if (activeTab === "search") renderPage();
+    if (activeTab === "search" || activeTab === "badges") renderPage();
   } catch (e) {
     // The director challenge remains usable with a five-film target when TMDB is unavailable.
   } finally {
@@ -896,6 +934,8 @@ function cinemaChallengeCatalog() {
       : director.count;
     const threshold = override ? override.movieIds.length : 5;
     const shortName = director.name.trim().split(/\s+/).slice(-1)[0];
+    const directorAsset = DIRECTOR_BADGE_ASSETS[director.id];
+    const directorPhoto = directorAsset?.photo || (cached?.profilePath ? `${TMDB_PROFILE}${cached.profilePath}` : "./badge-assets/camera.jpg");
     base.unshift({
       id: `director-${director.id}`,
       art: "director",
@@ -907,6 +947,9 @@ function cinemaChallengeCatalog() {
       current,
       directorId: director.id,
       directorName: director.name,
+      badgePhoto: directorPhoto,
+      badgeShape: "director",
+      badgePosition: directorAsset?.position || "50% 18%",
       movieIds,
       suggestedMovies: filmography.filter(movie => !getAllMovieIdsForUser(currentUser).has(Number(movie.id))),
       available: true,
@@ -965,6 +1008,13 @@ function sagaSymbolSvg(symbol) {
 }
 function challengeBadgeArtHtml(challenge, extraClass = "") {
   const art = challenge?.art || "classic";
+  if (challenge?.badgePhoto) {
+    const shape = challenge.badgeShape || "genre";
+    const icon = challenge.badgeIcon
+      ? `<img class="cinema-photo-badge-icon" src="${escapeAttr(challenge.badgeIcon)}" alt="">`
+      : "";
+    return `<div class="cinema-photo-badge shape-${escapeAttr(shape)} ${extraClass}" style="--badge-position:${escapeAttr(challenge.badgePosition || "50% 50%")}" role="img" aria-label="${escapeAttr(challenge?.name || "Badge cinéma")}"><img class="cinema-photo-badge-image" src="${escapeAttr(challenge.badgePhoto)}" alt="" loading="lazy">${icon}</div>`;
+  }
   if (art === "saga") {
     const image = `${TMDB_BACKDROP}${challenge.backdropPath || ""}`;
     return `<div class="cinema-saga-art ${challenge.legendary ? "legendary" : ""} ${extraClass}" style="--saga-image:url('${escapeAttr(image)}')" role="img" aria-label="${escapeAttr(challenge?.name || "Badge saga")}"><span>${sagaSymbolSvg(challenge.symbol)}</span></div>`;
@@ -4413,6 +4463,39 @@ body.no-page-scroll #root {
 .cinema-badge-art.art-social { --badge-back:#6B55A5; --badge-light:#F8F3FF; --badge-hot:#83D8C7; color:#6B55A5; }
 .cinema-badge-art.art-director { --badge-back:#4E416C; --badge-light:#FFF3D1; --badge-hot:#E9A0C1; color:#B85E88; }
 .cinema-badge-art.art-director .badge-hot { fill: none; stroke: var(--badge-hot); }
+.cinema-photo-badge {
+  width: 100%; height: 100%; position: relative; overflow: hidden; isolation: isolate;
+  background: var(--lav); filter: drop-shadow(0 7px 8px rgba(45,42,61,.16));
+}
+.cinema-photo-badge::after {
+  content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background: rgba(35,27,50,.34);
+}
+.cinema-photo-badge-image {
+  width: 100%; height: 100%; display: block; object-fit: cover;
+  object-position: var(--badge-position, 50% 50%);
+}
+.cinema-photo-badge-icon {
+  position: absolute; z-index: 2; left: 50%; top: 50%; width: 38%; height: 38%;
+  transform: translate(-50%,-50%); object-fit: contain;
+  filter: brightness(0) invert(1) drop-shadow(0 2px 4px rgba(0,0,0,.35));
+}
+.cinema-photo-badge.shape-genre {
+  clip-path: polygon(50% 0,92% 16%,92% 61%,77% 82%,50% 100%,23% 82%,8% 61%,8% 16%);
+}
+.cinema-photo-badge.shape-explore {
+  width: 92%; height: 92%; margin: 4%; border: 4px dotted var(--mint-deep);
+  border-radius: 50%; background: var(--card);
+}
+.cinema-photo-badge.shape-family {
+  clip-path: polygon(50% 0,88% 12%,100% 50%,88% 88%,50% 100%,12% 88%,0 50%,12% 12%);
+  border-radius: 24%;
+}
+.cinema-photo-badge.shape-director {
+  width: 91%; height: 100%; margin: 0 auto;
+  clip-path: polygon(12% 0,88% 0,100% 14%,94% 25%,100% 36%,94% 50%,100% 64%,94% 76%,100% 88%,88% 100%,12% 100%,0 88%,6% 76%,0 64%,6% 50%,0 36%,6% 25%,0 14%);
+}
+.cinema-photo-badge.shape-director::after { background: rgba(35,27,50,.08); }
 .cinema-saga-art {
   width: 100%; height: 100%; position: relative; overflow: hidden;
   background-image: linear-gradient(155deg, rgba(30,25,48,.05), rgba(30,25,48,.7)), var(--saga-image);
@@ -4858,7 +4941,7 @@ body.no-page-scroll #root {
 <div class="context-overlay" id="install-overlay">
   <div class="context-sheet">
     <div class="context-handle"></div>
-    <img class="install-logo" src="./letop-icon-192.png?v=20260705-badges-tab-v2" alt="Le Top">
+    <img class="install-logo" src="./letop-icon-192.png?v=20260705-photo-badges-v3" alt="Le Top">
     <div class="install-title" id="install-title">Installer Le Top</div>
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
