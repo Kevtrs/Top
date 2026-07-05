@@ -9,9 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Le Top 🍿</title>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260705-photo-badges-v3">
-<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260705-photo-badges-v3">
-<link rel="manifest" href="./site.webmanifest?v=20260705-photo-badges-v3">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260705-badge-films-v4">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260705-badge-films-v4">
+<link rel="manifest" href="./site.webmanifest?v=20260705-badge-films-v4">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -40,7 +40,7 @@ const TMDB_BACKDROP = "https://image.tmdb.org/t/p/w500";
 const TMDB_PROFILE = "https://image.tmdb.org/t/p/w185";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260705-photo-badges-v3";
+const PWA_VERSION = "20260705-badge-films-v4";
 const APP_PUBLIC_URL = "https://kevtrs.github.io/Top/";
 
 const APP_TABS = [
@@ -333,6 +333,7 @@ let recoPrefsUnsub = null;
 let creatingProfile = false; // état "créer un nouveau profil" sur l'écran de sélection
 let deferredInstallPrompt = null;
 let recommendationRequestSeq = 0;
+let badgeMoviesRequestSeq = 0;
 let profilesSynced = false;
 let rankingsSynced = false;
 let profilesServerConfirmed = false;
@@ -804,10 +805,11 @@ function challengeMovieMap(profileId) {
 }
 function groupChallengeState() {
   const profileIds = [...new Set([currentUser, ...allKnownProfiles().map(profile => profile.id)].filter(Boolean))];
-  if (profileIds.length < 2) return { current: 0, candidates: [], available: false };
+  if (profileIds.length < 2) return { current: 0, sharedMovies: [], candidates: [], available: false };
 
   const maps = profileIds.map(challengeMovieMap);
   const sharedIds = [...maps[0].keys()].filter(id => maps.every(map => map.has(id)));
+  const sharedMovies = sharedIds.map(id => maps[0].get(id)).filter(Boolean);
   const myIds = maps[profileIds.indexOf(currentUser)] || new Map();
   const otherMaps = profileIds.filter(id => id !== currentUser).map(challengeMovieMap);
   const candidates = otherMaps.length
@@ -815,7 +817,7 @@ function groupChallengeState() {
         .filter(([id]) => !myIds.has(id) && otherMaps.every(map => map.has(id)))
         .map(([, movie]) => movie)
     : [];
-  return { current: sharedIds.length, candidates, available: true };
+  return { current: sharedIds.length, sharedMovies, candidates, available: true };
 }
 function preferredDirectorFromSeen(seenMovies) {
   const directors = new Map();
@@ -905,6 +907,7 @@ function cinemaChallengeCatalog() {
       current,
       available: def.social ? groupState.available : true,
       suggestedMovies: def.social ? groupState.candidates : [],
+      associatedMovies: def.social ? groupState.sharedMovies : [],
       completed: current >= def.threshold || unlockedIds.has(def.id)
     };
   });
@@ -1084,11 +1087,9 @@ function renderChallengesGallery(gallery, closeAfterSelect = false) {
   gallery.querySelectorAll(".cinema-challenge-tile:not([disabled])").forEach(button => {
     button.addEventListener("click", () => {
       const chosen = catalog.find(challenge => challenge.id === button.dataset.challengeId);
-      if (!chosen || chosen.completed) return;
-      setActiveCinemaChallenge(chosen.id);
+      if (!chosen) return;
       if (closeAfterSelect) closeChallengesSheet();
-      renderPage();
-      showToast(`${chosen.name} devient ton objectif`);
+      openBadgeMoviesSheet(chosen.id);
     });
   });
 }
@@ -1102,6 +1103,128 @@ function openChallengesSheet() {
 }
 function closeChallengesSheet() {
   document.getElementById("cinema-challenges-overlay")?.classList.remove("show");
+  scheduleScrollLockUpdate();
+}
+function movieStoredForBadge(movieId) {
+  const id = Number(movieId);
+  return myRanked().find(movie => Number(movie.id) === id) ||
+    myWatched().find(movie => Number(movie.id) === id) ||
+    myWatchlist().find(movie => Number(movie.id) === id) || null;
+}
+function badgeMovieState(movieId) {
+  const id = Number(movieId);
+  const topIndex = myRanked().findIndex(movie => Number(movie.id) === id);
+  if (topIndex >= 0) return { label: `Top #${topIndex + 1}`, className: "top" };
+  const watched = myWatched().find(movie => Number(movie.id) === id);
+  if (watched) {
+    const rating = Number(watched.rating);
+    return { label: Number.isFinite(rating) ? `Vu · ${rating}/10` : "Vu", className: "seen" };
+  }
+  if (myWatchlist().some(movie => Number(movie.id) === id)) return { label: "À voir", className: "watchlist" };
+  return { label: "À découvrir", className: "new" };
+}
+function uniqueBadgeMovies(movies) {
+  const unique = new Map();
+  movies.filter(Boolean).forEach(movie => {
+    const id = Number(movie.id);
+    if (!id) return;
+    unique.set(id, { ...(unique.get(id) || {}), ...movie });
+  });
+  return [...unique.values()];
+}
+async function badgeAssociatedMovies(challenge) {
+  if (challenge.movieIds?.length) {
+    return (await Promise.all(challenge.movieIds.map(async id => {
+      const stored = movieStoredForBadge(id);
+      if (stored?.poster_path && stored?.title) return stored;
+      return getSagaMovieResult(id).catch(() => stored);
+    }))).filter(Boolean);
+  }
+
+  const counted = challengeSeenMovies().filter(movie => baseChallengeMatchesMovie(movie, challenge));
+  const attached = challenge.associatedMovies || [];
+  const jobs = challengeRecommendationJobs(challenge, { includeCompleted: true });
+  const batches = jobs.length ? await Promise.all(jobs) : [];
+  const discovered = batches.flat().map(item => item.movie);
+  return uniqueBadgeMovies([...counted, ...attached, ...discovered])
+    .filter(movie => movie.poster_path)
+    .slice(0, 36);
+}
+function renderBadgeMovieCards(container, movies) {
+  if (!movies.length) {
+    container.innerHTML = `<div class="badge-movies-empty">Aucun film disponible pour le moment.</div>`;
+    return;
+  }
+  container.innerHTML = movies.map(movie => {
+    const state = badgeMovieState(movie.id);
+    const year = String(movie.release_date || "").slice(0, 4);
+    return `
+      <button class="badge-movie-card" type="button" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(movie)))}'>
+        <span class="badge-movie-poster-wrap">
+          <img src="${escapeAttr(TMDB_IMG + movie.poster_path)}" alt="${escapeAttr(movie.title)}" loading="lazy">
+          <i class="badge-movie-state ${state.className}">${escapeHtml(state.label)}</i>
+        </span>
+        <strong>${escapeHtml(movie.title)}</strong>
+        <small>${escapeHtml(year || "Film")}</small>
+      </button>`;
+  }).join("");
+  container.querySelectorAll(".badge-movie-card").forEach(button => {
+    button.addEventListener("click", () => {
+      const movie = JSON.parse(button.dataset.movie);
+      closeBadgeMoviesSheet();
+      openMovieActionSheet(movie, "badge");
+    });
+  });
+}
+async function openBadgeMoviesSheet(challengeId) {
+  let challenge = cinemaChallengeCatalog().find(item => item.id === challengeId);
+  if (!challenge) return;
+  const overlay = document.getElementById("badge-movies-overlay");
+  const header = document.getElementById("badge-movies-header");
+  const list = document.getElementById("badge-movies-list");
+  if (!overlay || !header || !list) return;
+
+  const requestId = ++badgeMoviesRequestSeq;
+  overlay.dataset.challengeId = challenge.id;
+  overlay.classList.add("show");
+  scheduleScrollLockUpdate();
+
+  const active = activeCinemaChallenge();
+  const percent = Math.round(challengeProgress(challenge) * 100);
+  header.innerHTML = `
+    <div class="badge-movies-art">${challengeBadgeArtHtml(challenge)}</div>
+    <div class="badge-movies-copy">
+      <span>${challenge.completed ? "Badge débloqué" : `${challenge.current} / ${challenge.threshold}`}</span>
+      <strong>${escapeHtml(challenge.name)}</strong>
+      <p>${escapeHtml(challenge.description)}</p>
+      <div class="cinema-challenge-progress"><i style="width:${percent}%"></i></div>
+    </div>
+    ${challenge.completed ? "" : `<button class="btn-secondary badge-objective-btn" id="btn-set-badge-objective" type="button">${active?.id === challenge.id ? "Objectif actif" : "Choisir comme objectif"}</button>`}`;
+  list.innerHTML = `<div class="badge-movies-loading">${Array(6).fill('<span></span>').join("")}</div>`;
+
+  document.getElementById("btn-set-badge-objective")?.addEventListener("click", event => {
+    setActiveCinemaChallenge(challenge.id);
+    event.currentTarget.textContent = "Objectif actif";
+    renderPage();
+    showToast(`${challenge.name} devient ton objectif`);
+  });
+
+  try {
+    if (challenge.directorId && !challenge.movieIds?.length) {
+      await ensureDirectorFilmography({ id: challenge.directorId, name: challenge.directorName });
+      challenge = cinemaChallengeCatalog().find(item => item.id === challengeId) || challenge;
+    }
+    const movies = await badgeAssociatedMovies(challenge);
+    if (requestId !== badgeMoviesRequestSeq || !overlay.classList.contains("show") || overlay.dataset.challengeId !== challenge.id) return;
+    renderBadgeMovieCards(list, movies);
+  } catch (e) {
+    if (requestId !== badgeMoviesRequestSeq) return;
+    list.innerHTML = `<div class="badge-movies-empty">Impossible de charger les films pour le moment.</div>`;
+  }
+}
+function closeBadgeMoviesSheet() {
+  badgeMoviesRequestSeq += 1;
+  document.getElementById("badge-movies-overlay")?.classList.remove("show");
   scheduleScrollLockUpdate();
 }
 function announceNewChallengeUnlocks() {
@@ -1869,7 +1992,7 @@ function renderBadgesTabContent() {
     </div>
     ${renderChallengeSpotlightHtml(false)}
     <section class="badges-tab-collection">
-      <div class="badges-tab-heading"><strong>Tous les badges</strong><span>Choisis-en un pour en faire ton objectif</span></div>
+      <div class="badges-tab-heading"><strong>Tous les badges</strong><span>Touche un badge pour voir les films associés</span></div>
       <div class="cinema-challenge-gallery" id="badges-challenge-gallery"></div>
     </section>`;
 }
@@ -2084,20 +2207,8 @@ function attachAppEvents() {
   });
   document.getElementById("btn-open-challenges")?.addEventListener("click", openChallengesSheet);
   document.getElementById("btn-challenge-movies")?.addEventListener("click", () => {
-    recoExpanded = true;
-    const showChallengeMovies = () => {
-      toggleAccordion("reco", true);
-      updateRecommendations();
-      document.getElementById("reco-accordion-header")?.scrollIntoView({ behavior: "smooth", block: "center" });
-    };
-    if (activeTab !== "search") {
-      activeTab = "search";
-      viewingUser = currentUser;
-      renderPage();
-      setTimeout(showChallengeMovies, 80);
-    } else {
-      showChallengeMovies();
-    }
+    const challengeId = document.querySelector(".cinema-challenge-featured")?.dataset.challengeId;
+    if (challengeId) openBadgeMoviesSheet(challengeId);
   });
 
   document.getElementById("btn-reset")?.addEventListener("click", () => {
@@ -3654,8 +3765,8 @@ async function ignoreRecommendedMovie(movie, card = null) {
   await persistIgnoredMovie(movie, dislikedGenreWeights, "Je l'enlève des recos");
 }
 
-function challengeRecommendationJobs(challenge) {
-  if (!challenge || challenge.completed) return [];
+function challengeRecommendationJobs(challenge, options = {}) {
+  if (!challenge || (challenge.completed && !options.includeCompleted)) return [];
   const jobs = [];
   if (challenge.missingMovieIds?.length) {
     jobs.push(Promise.all(challenge.missingMovieIds.slice(0, 14).map(id =>
@@ -4006,6 +4117,10 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target.id === "cinema-challenges-overlay") closeChallengesSheet();
   });
   document.getElementById("btn-close-challenges").addEventListener("click", closeChallengesSheet);
+  document.getElementById("badge-movies-overlay").addEventListener("click", (e) => {
+    if (e.target.id === "badge-movies-overlay") closeBadgeMoviesSheet();
+  });
+  document.getElementById("btn-close-badge-movies").addEventListener("click", closeBadgeMoviesSheet);
   document.getElementById("rating-overlay").addEventListener("click", (e) => {
     if (e.target.id === "rating-overlay") closeRatingSheet();
   });
@@ -4591,6 +4706,65 @@ body.no-page-scroll #root {
 .badges-tab-heading strong { display: block; font-size: 16px; font-weight: 800; }
 .badges-tab-heading span { display: block; margin-top: 3px; color: var(--ink-soft); font-size: 10.5px; font-weight: 700; }
 
+.badge-movies-sheet { max-width: 620px; }
+#badge-movies-header {
+  display: grid; grid-template-columns: 76px minmax(0,1fr); gap: 12px; align-items: center;
+  padding: 4px 4px 12px;
+}
+.badge-movies-art { width: 76px; height: 76px; }
+.badge-movies-copy { min-width: 0; }
+.badge-movies-copy > span {
+  display: block; color: var(--lav-deep); font-family: 'DM Mono', monospace;
+  font-size: 9px; font-weight: 700; text-transform: uppercase;
+}
+.badge-movies-copy > strong { display: block; margin-top: 3px; font-size: 17px; font-weight: 800; line-height: 1.15; }
+.badge-movies-copy > p { margin-top: 3px; color: var(--ink-soft); font-size: 10.5px; font-weight: 650; line-height: 1.35; }
+.badge-movies-copy .cinema-challenge-progress { margin-top: 7px; height: 5px; }
+.badge-objective-btn { grid-column: 1 / -1; margin: 0; min-height: 42px; }
+.badge-movies-section-title {
+  padding: 8px 4px 10px; color: var(--ink); font-size: 13px; font-weight: 800;
+}
+#badge-movies-list {
+  display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px;
+  padding: 0 2px 14px;
+}
+.badge-movie-card {
+  border: none; padding: 0 0 8px; min-width: 0; overflow: hidden; text-align: left;
+  border-radius: 13px; background: var(--card); color: var(--ink); font-family: 'Plus Jakarta Sans', sans-serif;
+  box-shadow: 3px 3px 8px var(--shadow-d), -3px -3px 8px var(--shadow-l);
+}
+.badge-movie-card:active { transform: scale(.97); }
+.badge-movie-poster-wrap { display: block; position: relative; }
+.badge-movie-poster-wrap img { display: block; width: 100%; aspect-ratio: 2 / 3; object-fit: cover; }
+.badge-movie-state {
+  position: absolute; left: 6px; right: 6px; bottom: 6px; min-height: 19px; padding: 4px 5px;
+  border-radius: 8px; color: #fff; background: rgba(45,42,61,.82); backdrop-filter: blur(6px);
+  font-style: normal; font-size: 8px; font-weight: 800; line-height: 1.1; text-align: center;
+}
+.badge-movie-state.top { background: rgba(133,95,201,.9); }
+.badge-movie-state.seen { background: rgba(47,145,126,.9); }
+.badge-movie-state.watchlist { background: rgba(75,130,189,.9); }
+.badge-movie-card > strong {
+  display: -webkit-box; min-height: 29px; margin: 7px 7px 0; overflow: hidden;
+  font-size: 10.5px; font-weight: 800; line-height: 1.3; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.badge-movie-card > small { display: block; margin: 3px 7px 0; color: var(--ink-soft); font-size: 8.5px; font-weight: 700; }
+.badge-movies-loading { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+.badge-movies-loading span {
+  display: block; aspect-ratio: 2 / 3.75; border-radius: 13px; background: #E8E4F5;
+  background-image: linear-gradient(90deg, transparent, rgba(255,255,255,.7), transparent);
+  background-size: 70px 100%; background-repeat: no-repeat; animation: shine 1.1s ease infinite;
+}
+.badge-movies-empty {
+  grid-column: 1 / -1; padding: 22px 12px; border-radius: 14px; color: var(--ink-soft);
+  background: var(--card); font-size: 11px; font-weight: 700; text-align: center;
+}
+
+@media (min-width: 540px) {
+  #badge-movies-list { grid-template-columns: repeat(4, minmax(0,1fr)); }
+  .badge-movies-loading { grid-template-columns: repeat(4,minmax(0,1fr)); }
+}
+
 @media (max-width: 390px) {
   .cinema-challenge-featured { grid-template-columns: 72px minmax(0, 1fr); gap: 11px; padding: 12px; }
   .cinema-challenge-art { width: 72px; height: 72px; }
@@ -4941,7 +5115,7 @@ body.no-page-scroll #root {
 <div class="context-overlay" id="install-overlay">
   <div class="context-sheet">
     <div class="context-handle"></div>
-    <img class="install-logo" src="./letop-icon-192.png?v=20260705-photo-badges-v3" alt="Le Top">
+    <img class="install-logo" src="./letop-icon-192.png?v=20260705-badge-films-v4" alt="Le Top">
     <div class="install-title" id="install-title">Installer Le Top</div>
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
@@ -4965,11 +5139,21 @@ body.no-page-scroll #root {
     <div class="cinema-challenges-sheet-heading">
       <div>
         <div class="install-title">Défis cinéma</div>
-        <p>Choisis un objectif : les recommandations t'aideront à le terminer.</p>
+        <p>Touche un badge pour afficher directement les films associés.</p>
       </div>
     </div>
     <div id="cinema-challenge-gallery"></div>
     <button class="btn-secondary" id="btn-close-challenges" type="button">Fermer</button>
+  </div>
+</div>
+
+<div class="context-overlay" id="badge-movies-overlay">
+  <div class="context-sheet badge-movies-sheet">
+    <div class="context-handle"></div>
+    <div id="badge-movies-header"></div>
+    <div class="badge-movies-section-title">Films associés</div>
+    <div id="badge-movies-list"></div>
+    <button class="btn-secondary" id="btn-close-badge-movies" type="button">Fermer</button>
   </div>
 </div>
 
