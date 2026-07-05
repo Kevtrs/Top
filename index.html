@@ -9,9 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Le Top 🍿</title>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260705-watched-badges-v5">
-<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260705-watched-badges-v5">
-<link rel="manifest" href="./site.webmanifest?v=20260705-watched-badges-v5">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260705-ux-polish-v6">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260705-ux-polish-v6">
+<link rel="manifest" href="./site.webmanifest?v=20260705-ux-polish-v6">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -40,7 +40,7 @@ const TMDB_BACKDROP = "https://image.tmdb.org/t/p/w500";
 const TMDB_PROFILE = "https://image.tmdb.org/t/p/w185";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260705-watched-badges-v5";
+const PWA_VERSION = "20260705-ux-polish-v6";
 const APP_PUBLIC_URL = "https://kevtrs.github.io/Top/";
 
 const APP_TABS = [
@@ -309,6 +309,7 @@ let allRankings  = {};
 let allWatched = {};
 let allWatchlist = {};
 let activeTab = "search";
+let badgeGalleryFilter = "progress";
 let recoExpanded = false;
 let recentExpanded = false;
 let draggedIndex = null;
@@ -1059,6 +1060,18 @@ function renderChallengesGallery(gallery, closeAfterSelect = false) {
   if (!gallery) return;
   const active = activeCinemaChallenge();
   const catalog = cinemaChallengeCatalog();
+  const filter = gallery.dataset.filter || "all";
+  let visibleCatalog = catalog;
+  if (filter === "progress") {
+    visibleCatalog = catalog
+      .filter(challenge => challenge.available && !challenge.completed)
+      .sort((a, b) => challengeProgress(b) - challengeProgress(a))
+      .slice(0, 8);
+  } else if (filter === "unlocked") {
+    visibleCatalog = catalog.filter(challenge => challenge.completed);
+  } else if (filter === "sagas") {
+    visibleCatalog = catalog.filter(challenge => challenge.group === "sagas" || challenge.group === "legendary");
+  }
   const groups = [
     { id: "auteurs", title: "Signatures", subtitle: "Les cinéastes qui marquent ton Top" },
     { id: "cinema", title: "Défis cinéma", subtitle: "Des habitudes qui racontent tes goûts" },
@@ -1080,10 +1093,10 @@ function renderChallengesGallery(gallery, closeAfterSelect = false) {
       </button>`;
   };
   gallery.innerHTML = groups.map(group => {
-    const challenges = catalog.filter(challenge => challenge.group === group.id);
+    const challenges = visibleCatalog.filter(challenge => challenge.group === group.id);
     if (!challenges.length) return "";
     return `<section class="cinema-challenge-group"><div class="cinema-challenge-group-heading"><strong>${escapeHtml(group.title)}</strong><span>${escapeHtml(group.subtitle)}</span></div>${challenges.map(tileHtml).join("")}</section>`;
-  }).join("");
+  }).join("") || `<div class="badge-filter-empty">Aucun badge dans cette catégorie pour le moment.</div>`;
   gallery.querySelectorAll(".cinema-challenge-tile:not([disabled])").forEach(button => {
     button.addEventListener("click", () => {
       const chosen = catalog.find(challenge => challenge.id === button.dataset.challengeId);
@@ -1665,6 +1678,18 @@ function tabIconHtml(icon) {
       <path d="m6 6 12 12"></path>
     </svg>`;
   }
+  if (icon === "check") {
+    return `<svg ${common}>
+      <path d="m5 12 4 4L19 6"></path>
+    </svg>`;
+  }
+  if (icon === "grip") {
+    return `<svg ${common}>
+      <circle cx="9" cy="5" r="1"></circle><circle cx="15" cy="5" r="1"></circle>
+      <circle cx="9" cy="12" r="1"></circle><circle cx="15" cy="12" r="1"></circle>
+      <circle cx="9" cy="19" r="1"></circle><circle cx="15" cy="19" r="1"></circle>
+    </svg>`;
+  }
   if (icon === "phone") {
     return `<svg ${common}>
       <rect x="7" y="2" width="10" height="20" rx="2"></rect>
@@ -1703,7 +1728,7 @@ function renderTabBar() {
   <nav class="app-tabbar-wrap" aria-label="Navigation principale">
     <menu class="app-tabbar">
       ${APP_TABS.map(tab => `
-        <button class="app-tab-item ${activeTab === tab.id ? "active" : ""}" data-tab="${tab.id}" style="--tab-color:${tab.color}" type="button">
+        <button class="app-tab-item ${activeTab === tab.id ? "active" : ""}" data-tab="${tab.id}" style="--tab-color:${tab.color}" type="button" aria-label="${escapeAttr(tab.label)}" ${activeTab === tab.id ? 'aria-current="page"' : ""}>
           <span class="app-tab-icon">${tabIconHtml(tab.icon)}</span>
           <strong class="app-tab-text ${activeTab === tab.id ? "active" : ""}">${tab.label}</strong>
         </button>
@@ -1931,7 +1956,7 @@ function renderSearchTabContent(myIncoming) {
     </div>
 
     <div class="accordion-section">
-      <div class="accordion-header" id="reco-accordion-header">
+      <button class="accordion-header" id="reco-accordion-header" type="button" aria-expanded="${recoExpanded}">
         <div class="accordion-left">
           ${surfaceIconHtml("hand", "accordion-icon")}
           <div>
@@ -1940,14 +1965,14 @@ function renderSearchTabContent(myIncoming) {
           </div>
         </div>
         <div class="accordion-chevron" id="reco-chevron" style="transform:${recoExpanded ? "rotate(180deg)" : "rotate(0deg)"}">⌄</div>
-      </div>
+      </button>
       <div class="accordion-body" id="reco-body" style="${recoExpanded ? "" : "display:none"}">
         <div class="reco-scroll" id="reco-scroll"></div>
       </div>
     </div>
 
     <div class="accordion-section">
-      <div class="accordion-header" id="recent-accordion-header">
+      <button class="accordion-header" id="recent-accordion-header" type="button" aria-expanded="${recentExpanded}">
         <div class="accordion-left">
           ${surfaceIconHtml("clock", "accordion-icon")}
           <div>
@@ -1956,7 +1981,7 @@ function renderSearchTabContent(myIncoming) {
           </div>
         </div>
         <div class="accordion-chevron" id="recent-chevron" style="transform:${recentExpanded ? "rotate(180deg)" : "rotate(0deg)"}">⌄</div>
-      </div>
+      </button>
       <div class="accordion-body" id="recent-body" style="${recentExpanded ? "" : "display:none"}">
         <div class="recent-list" id="recent-list"></div>
       </div>
@@ -1984,6 +2009,12 @@ function renderWatchlistTabContent() {
 function renderBadgesTabContent() {
   const catalog = cinemaChallengeCatalog();
   const unlocked = catalog.filter(challenge => challenge.completed).length;
+  const filters = [
+    { id: "progress", label: "À finir" },
+    { id: "unlocked", label: "Gagnés" },
+    { id: "sagas", label: "Sagas" },
+    { id: "all", label: "Tous" }
+  ];
   return `
     <div class="badges-tab-hero">
       <span>COLLECTION</span>
@@ -1993,7 +2024,10 @@ function renderBadgesTabContent() {
     ${renderChallengeSpotlightHtml(false)}
     <section class="badges-tab-collection">
       <div class="badges-tab-heading"><strong>Tous les badges</strong><span>Touche un badge pour voir les films associés</span></div>
-      <div class="cinema-challenge-gallery" id="badges-challenge-gallery"></div>
+      <div class="badge-filter-bar" role="group" aria-label="Filtrer les badges">
+        ${filters.map(filter => `<button class="badge-filter-btn ${badgeGalleryFilter === filter.id ? "active" : ""}" data-filter="${filter.id}" type="button" aria-pressed="${badgeGalleryFilter === filter.id}">${filter.label}</button>`).join("")}
+      </div>
+      <div class="cinema-challenge-gallery" id="badges-challenge-gallery" data-filter="${escapeAttr(badgeGalleryFilter)}"></div>
     </section>`;
 }
 
@@ -2073,7 +2107,7 @@ function renderApp() {
           <div class="brand-title">${appLogoHtml("brand-logo", "icon")}Le Top</div>
         </div>
         <div class="header-btns">
-          <button class="icon-pill" id="btn-settings" title="Réglages">${tabIconHtml("settings")}</button>
+          <button class="icon-pill" id="btn-settings" type="button" title="Réglages" aria-label="Ouvrir les réglages">${tabIconHtml("settings")}</button>
         </div>
       </div>
     </div>
@@ -2198,10 +2232,17 @@ function attachAppEvents() {
       renderPage();
     });
   });
-  document.querySelectorAll(".quick-home-card").forEach(btn => {
+  document.querySelectorAll(".quick-home-card, .empty-state-action").forEach(btn => {
     btn.addEventListener("click", () => {
       activeTab = btn.dataset.goTab;
       if (activeTab !== "friends") viewingUser = currentUser;
+      renderPage();
+    });
+  });
+  document.querySelectorAll(".badge-filter-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (badgeGalleryFilter === btn.dataset.filter) return;
+      badgeGalleryFilter = btn.dataset.filter;
       renderPage();
     });
   });
@@ -2279,9 +2320,11 @@ function attachAppEvents() {
 function toggleAccordion(prefix, expand) {
   const body = document.getElementById(`${prefix}-body`);
   const chevron = document.getElementById(`${prefix}-chevron`);
+  const header = document.getElementById(`${prefix}-accordion-header`);
   if (!body || !chevron) return;
   body.style.display = expand ? "block" : "none";
   chevron.style.transform = expand ? "rotate(180deg)" : "rotate(0deg)";
+  header?.setAttribute("aria-expanded", String(expand));
 }
 
 function showToast(msg) {
@@ -2377,9 +2420,11 @@ async function runGlobalSearch(query) {
       const poster = m.poster_path ? TMDB_IMG + m.poster_path : "";
       const title = escapeHtml(m.title);
       const year = m.release_date ? ` (${escapeHtml(m.release_date.slice(0,4))})` : "";
+      const state = badgeMovieState(m.id);
+      const stateHtml = state.className === "new" ? "" : `<span class="search-movie-state ${state.className}">${escapeHtml(state.label)}</span>`;
       return `
       <div class="poster-pick" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(m)))}'>
-        ${poster ? `<img src="${poster}" alt="${escapeAttr(m.title)}">` : `<div style="aspect-ratio:2/3;background:#E8E4F5;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--ink-faint);padding:6px;text-align:center">Pas d'affiche</div>`}
+        ${poster ? `<div class="poster-pick-media"><img src="${poster}" alt="${escapeAttr(m.title)}">${stateHtml}</div>` : `<div style="aspect-ratio:2/3;background:#E8E4F5;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--ink-faint);padding:6px;text-align:center">Pas d'affiche</div>`}
         <div class="poster-pick-title">${title}${year}</div>
       </div>`;
     }).join("")}</div>`;
@@ -2603,13 +2648,25 @@ function openMovieActionSheet(movie, origin = "search", index = null) {
 
   document.getElementById("movie-action-items").innerHTML = `
     <div id="movie-action-details"></div>
-    <div class="context-item movie-action-item" data-action="top"><span class="ic">🏆</span> ${inTop ? "Déjà dans ton Top" : "Ajouter au Top"}</div>
-    <div class="context-item movie-action-item" data-action="watched"><span class="ic">🎟️</span> ${inWatched ? "Modifier la note" : "Marquer comme vu"}</div>
-    <div class="context-item movie-action-item" data-action="watchlist"><span class="ic">🍿</span> ${inWatchlist ? "Déjà dans À voir" : "Ajouter à À voir"}</div>
-    <div class="context-item movie-action-item" data-action="recommend"><span class="ic">👋</span> Recommander</div>
-    ${origin === "top" ? `<div class="context-divider"></div><div class="context-item movie-action-item danger" data-action="remove-top"><span class="ic">🗑️</span> Retirer du Top</div>` : ""}
-    ${origin === "watched" ? `<div class="context-divider"></div><div class="context-item movie-action-item danger" data-action="remove-watched"><span class="ic">🗑️</span> Retirer des vus</div>` : ""}
-    ${origin === "watchlist" ? `<div class="context-divider"></div><div class="context-item movie-action-item danger" data-action="remove-watchlist"><span class="ic">🗑️</span> Retirer de À voir</div>` : ""}
+    <button class="context-item movie-action-item ${inTop ? "is-done" : ""}" data-action="top" type="button" ${inTop ? "disabled" : ""}>
+      ${surfaceIconHtml(inTop ? "check" : "crown", "movie-action-icon")}
+      <span class="movie-action-copy"><strong>${inTop ? "Dans ton Top" : "Ajouter au Top"}</strong><small>${inTop ? "Action déjà effectuée" : "Ajouté en dernière position"}</small></span>
+    </button>
+    <button class="context-item movie-action-item" data-action="watched" type="button">
+      ${surfaceIconHtml("ticket", "movie-action-icon")}
+      <span class="movie-action-copy"><strong>${inWatched ? "Modifier la note" : "Marquer comme vu"}</strong><small>${inWatched ? "Changer ta note sur 10" : "Ajouter aux films vus et noter"}</small></span>
+    </button>
+    <button class="context-item movie-action-item ${inWatchlist ? "is-done" : ""}" data-action="watchlist" type="button" ${inWatchlist ? "disabled" : ""}>
+      ${surfaceIconHtml(inWatchlist ? "check" : "popcorn", "movie-action-icon")}
+      <span class="movie-action-copy"><strong>${inWatchlist ? "Dans À voir" : "Ajouter à À voir"}</strong><small>${inWatchlist ? "Action déjà effectuée" : "Garder ce film pour plus tard"}</small></span>
+    </button>
+    <button class="context-item movie-action-item" data-action="recommend" type="button">
+      ${surfaceIconHtml("hand", "movie-action-icon")}
+      <span class="movie-action-copy"><strong>Recommander</strong><small>Envoyer à un proche</small></span>
+    </button>
+    ${origin === "top" ? `<div class="context-divider"></div><button class="context-item movie-action-item danger" data-action="remove-top" type="button">${surfaceIconHtml("trash", "movie-action-icon")}<span class="movie-action-copy"><strong>Retirer du Top</strong></span></button>` : ""}
+    ${origin === "watched" ? `<div class="context-divider"></div><button class="context-item movie-action-item danger" data-action="remove-watched" type="button">${surfaceIconHtml("trash", "movie-action-icon")}<span class="movie-action-copy"><strong>Retirer des vus</strong></span></button>` : ""}
+    ${origin === "watchlist" ? `<div class="context-divider"></div><button class="context-item movie-action-item danger" data-action="remove-watchlist" type="button">${surfaceIconHtml("trash", "movie-action-icon")}<span class="movie-action-copy"><strong>Retirer de À voir</strong></span></button>` : ""}
   `;
 
   document.getElementById("movie-action-overlay").classList.add("show");
@@ -2658,6 +2715,14 @@ function handleMovieAction(action) {
   }
 }
 
+function attachEmptyStateAction(container) {
+  container?.querySelector(".empty-state-action")?.addEventListener("click", event => {
+    activeTab = event.currentTarget.dataset.goTab || "search";
+    viewingUser = currentUser;
+    renderPage();
+  });
+}
+
 function renderRanked() {
   const el = document.getElementById("rank-list");
   if (!el) return;
@@ -2666,7 +2731,14 @@ function renderRanked() {
   const list = viewedRanked();
 
   if (!list.length) {
-    el.innerHTML = `<div class="empty-state">${isOwnProfile ? "Va dans Recherche pour ajouter ton premier film au Top 🎬" : "Ce profil n'a pas encore classé de film"}</div>`;
+    el.innerHTML = isOwnProfile ? `
+      <div class="empty-state">
+        ${surfaceIconHtml("crown", "empty-state-icon")}
+        <strong>Commence ton Top</strong>
+        <p>Choisis le premier film de ton classement.</p>
+        <button class="btn-primary empty-state-action" data-go-tab="search" type="button">Rechercher un film</button>
+      </div>` : `<div class="empty-state"><strong>Aucun film classé</strong><p>Ce profil n'a pas encore commencé son Top.</p></div>`;
+    attachEmptyStateAction(el);
     return;
   }
   el.innerHTML = list.map((m, i) => {
@@ -2682,7 +2754,8 @@ function renderRanked() {
         <div class="rank-title">${title}</div>
         <div class="rank-meta">${year} · ⭐ ${rating}</div>
       </div>
-      ${canRecommend ? `<button class="rank-recommend-btn" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(m)))}'>👋</button>` : ""}
+      ${isOwnProfile ? `<span class="rank-drag-handle" aria-hidden="true">${tabIconHtml("grip")}</span>` : ""}
+      ${canRecommend ? `<button class="rank-recommend-btn" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(m)))}' type="button" aria-label="Recommander ${escapeAttr(m.title)}">${tabIconHtml("hand")}</button>` : ""}
     </div>`;
   }).join("");
 
@@ -2703,7 +2776,8 @@ function renderWatchedList() {
   if (!el) return;
   const list = [...myWatched()].sort((a,b) => (b.watchedAt || b.addedAt || 0) - (a.watchedAt || a.addedAt || 0));
   if (!list.length) {
-    el.innerHTML = `<div class="empty-state">Passe par Recherche pour noter un film sans le mettre dans ton Top</div>`;
+    el.innerHTML = `<div class="empty-state">${surfaceIconHtml("ticket", "empty-state-icon")}<strong>Ton historique est vide</strong><p>Note un film sans avoir besoin de le classer.</p><button class="btn-primary empty-state-action" data-go-tab="search" type="button">Noter un film</button></div>`;
+    attachEmptyStateAction(el);
     return;
   }
   el.innerHTML = list.map(m => {
@@ -2711,6 +2785,7 @@ function renderWatchedList() {
     const title = escapeHtml(m.title);
     const year = m.release_date ? escapeHtml(m.release_date.slice(0,4)) : "????";
     const rating = Number.isFinite(Number(m.rating)) ? `${Number(m.rating)}/10` : "—";
+    const inTop = myRanked().some(movie => Number(movie.id) === Number(m.id));
     return `
     <div class="shelf-row" data-id="${m.id}">
       ${poster ? `<img class="shelf-poster" src="${poster}" alt="${escapeAttr(m.title)}">` : `<div class="shelf-poster" style="background:#E8E4F5"></div>`}
@@ -2718,9 +2793,8 @@ function renderWatchedList() {
         <div class="shelf-title">${title}</div>
         <div class="shelf-meta">${year} · vu</div>
         <div class="shelf-actions">
-          <button class="shelf-btn" data-action="rate" data-movie='${escapeAttr(JSON.stringify(m))}'>Modifier</button>
-          <button class="shelf-btn" data-action="top" data-movie='${escapeAttr(JSON.stringify(m))}'>Top</button>
-          <button class="shelf-btn danger" data-action="remove" data-id="${m.id}">Retirer</button>
+          <button class="shelf-btn" data-action="rate" data-movie='${escapeAttr(JSON.stringify(m))}' type="button">${tabIconHtml("ticket")}<span>Note</span></button>
+          <button class="shelf-btn ${inTop ? "is-done" : ""}" data-action="top" data-movie='${escapeAttr(JSON.stringify(m))}' type="button" ${inTop ? "disabled" : ""}>${tabIconHtml(inTop ? "check" : "crown")}<span>${inTop ? "Dans le Top" : "Top"}</span></button>
         </div>
       </div>
       <div class="rating-badge">${rating}</div>
@@ -2749,7 +2823,8 @@ function renderWatchlist() {
   if (!el) return;
   const list = [...myWatchlist()].sort((a,b) => (b.savedAt || b.addedAt || 0) - (a.savedAt || a.addedAt || 0));
   if (!list.length) {
-    el.innerHTML = `<div class="empty-state">Passe par Recherche pour garder un film à voir plus tard</div>`;
+    el.innerHTML = `<div class="empty-state">${surfaceIconHtml("popcorn", "empty-state-icon")}<strong>Rien à regarder plus tard</strong><p>Garde ici les films qui te donnent envie.</p><button class="btn-primary empty-state-action" data-go-tab="search" type="button">Trouver un film</button></div>`;
+    attachEmptyStateAction(el);
     return;
   }
   el.innerHTML = list.map(m => {
@@ -2763,9 +2838,8 @@ function renderWatchlist() {
         <div class="shelf-title">${title}</div>
         <div class="shelf-meta">${year} · à voir</div>
         <div class="shelf-actions">
-          <button class="shelf-btn" data-action="watched" data-movie='${escapeAttr(JSON.stringify(m))}'>Vu</button>
-          <button class="shelf-btn" data-action="top" data-movie='${escapeAttr(JSON.stringify(m))}'>Top</button>
-          <button class="shelf-btn danger" data-action="remove" data-id="${m.id}">Retirer</button>
+          <button class="shelf-btn" data-action="watched" data-movie='${escapeAttr(JSON.stringify(m))}' type="button">${tabIconHtml("ticket")}<span>Vu</span></button>
+          <button class="shelf-btn" data-action="top" data-movie='${escapeAttr(JSON.stringify(m))}' type="button">${tabIconHtml("crown")}<span>Top</span></button>
         </div>
       </div>
     </div>`;
@@ -2877,6 +2951,7 @@ function attachRankInteractions() {
 
     row.addEventListener("click", (e) => {
       if (suppressNextRankClick || touchDragState) return;
+      if (e.target.closest(".rank-drag-handle")) return;
       const index = parseInt(row.dataset.index);
       const movie = myRanked()[index];
       if (movie) openMovieActionSheet(movie, "top", index);
@@ -4407,8 +4482,9 @@ body.no-page-scroll #root {
 .rank-recommend-btn {
   width: 34px; height: 34px; border-radius: 50%; border: none; background: var(--bg);
   box-shadow: 3px 3px 6px var(--shadow-d), -3px -3px 6px var(--shadow-l);
-  font-size: 14px; cursor: pointer; transition: transform 0.12s;
+  color: var(--lav-deep); display: grid; place-items: center; cursor: pointer; transition: transform 0.12s;
 }
+.rank-recommend-btn .tab-svg { width: 18px; height: 18px; }
 .rank-recommend-btn:active { transform: scale(0.88); }
 
 .header {
@@ -4742,6 +4818,24 @@ body.no-page-scroll #root {
 .badges-tab-heading { margin-bottom: 12px; }
 .badges-tab-heading strong { display: block; font-size: 16px; font-weight: 800; }
 .badges-tab-heading span { display: block; margin-top: 3px; color: var(--ink-soft); font-size: 10.5px; font-weight: 700; }
+.badge-filter-bar {
+  display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 5px;
+  margin: 0 0 16px; padding: 5px; border-radius: 15px; background: rgba(226,220,241,.58);
+  box-shadow: inset 2px 2px 5px rgba(167,156,201,.18), inset -2px -2px 5px rgba(255,255,255,.78);
+}
+.badge-filter-btn {
+  min-width: 0; min-height: 40px; border: none; border-radius: 11px; padding: 0 4px;
+  background: transparent; color: var(--ink-soft); font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 10px; font-weight: 800; white-space: nowrap;
+}
+.badge-filter-btn.active {
+  color: var(--lav-deep); background: var(--card);
+  box-shadow: 3px 3px 7px var(--shadow-d), -3px -3px 7px var(--shadow-l);
+}
+.badge-filter-empty {
+  padding: 24px 14px; border-radius: 14px; background: var(--card); color: var(--ink-soft);
+  font-size: 11px; font-weight: 700; text-align: center;
+}
 
 .badge-movies-sheet { max-width: 620px; }
 #badge-movies-header {
@@ -4821,7 +4915,16 @@ body.no-page-scroll #root {
 .poster-pick:nth-child(5) { animation-delay: 0.18s; } .poster-pick:nth-child(6) { animation-delay: 0.22s; }
 @keyframes pop-in { from { opacity:0; transform: scale(0.85) translateY(8px); } to { opacity:1; transform: scale(1) translateY(0); } }
 .poster-pick:active { transform: scale(0.93); }
+.poster-pick-media { position: relative; }
 .poster-pick img { width:100%; aspect-ratio:2/3; object-fit:cover; display:block; }
+.search-movie-state {
+  position: absolute; left: 7px; right: 7px; bottom: 7px; padding: 5px 6px;
+  border-radius: 8px; color: #fff; background: rgba(45,42,61,.84); backdrop-filter: blur(6px);
+  font-size: 8px; font-weight: 800; line-height: 1.1; text-align: center;
+}
+.search-movie-state.top { background: rgba(133,95,201,.92); }
+.search-movie-state.seen { background: rgba(47,145,126,.92); }
+.search-movie-state.watchlist { background: rgba(75,130,189,.92); }
 .poster-pick-title { font-size: 11px; font-weight: 600; padding: 8px 9px 9px; line-height: 1.25; color: var(--ink); }
 .poster-pick.added { opacity: 0.3; pointer-events: none; }
 
@@ -4875,6 +4978,12 @@ body.no-page-scroll #root {
 .rank-info { min-width: 0; }
 .rank-title { font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rank-meta { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--ink-soft); margin-top: 3px; }
+.rank-drag-handle {
+  width: 32px; height: 44px; display: grid; place-items: center; color: var(--ink-faint);
+  border-radius: 12px; touch-action: none;
+}
+.rank-drag-handle .tab-svg { width: 21px; height: 21px; }
+.rank-card.pressed .rank-drag-handle { color: var(--lav-deep); }
 
 .empty-state {
   text-align: center; padding: 50px 24px; font-size: 13px; color: var(--ink-faint); font-weight: 600;
@@ -4882,6 +4991,15 @@ body.no-page-scroll #root {
   box-shadow: inset 3px 3px 8px var(--shadow-d), inset -3px -3px 8px var(--shadow-l);
   margin: 0 20px;
 }
+.empty-state-icon {
+  width: 48px; height: 48px; margin: 0 auto 12px; display: grid; place-items: center;
+  border-radius: 16px; color: var(--lav-deep); background: var(--bg);
+  box-shadow: inset 3px 3px 7px var(--shadow-d), inset -3px -3px 7px var(--shadow-l);
+}
+.empty-state-icon .tab-svg { width: 25px; height: 25px; }
+.empty-state > strong { display: block; color: var(--ink); font-size: 15px; font-weight: 800; }
+.empty-state > p { margin-top: 5px; color: var(--ink-soft); font-size: 11px; font-weight: 650; line-height: 1.4; }
+.empty-state .empty-state-action { max-width: 240px; margin: 18px auto 0; font-size: 12px; padding: 12px; }
 .empty-state small {
   display: block; margin-top: 12px; font-size: 11px; color: var(--ink-soft);
 }
@@ -4893,6 +5011,7 @@ body.no-page-scroll #root {
 .accordion-section { margin: 18px 20px 0; }
 .accordion-header {
   background: var(--card); border-radius: 18px; padding: 16px 18px;
+  width: 100%; border: 0; color: var(--ink); text-align: left; font-family: 'Plus Jakarta Sans', sans-serif;
   display: flex; align-items: center; justify-content: space-between;
   box-shadow: 4px 4px 10px var(--shadow-d), -4px -4px 10px var(--shadow-l);
   cursor: pointer; transition: transform 0.12s;
@@ -4970,9 +5089,13 @@ body.no-page-scroll #root {
 .shelf-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .shelf-btn {
   border: none; border-radius: 10px; background: var(--bg); color: var(--lav-deep);
-  padding: 6px 8px; font-size: 10px; font-weight: 800; font-family: 'Plus Jakarta Sans', sans-serif;
+  min-height: 30px; padding: 5px 8px; display: inline-flex; align-items: center; gap: 4px;
+  font-size: 9.5px; font-weight: 800; font-family: 'Plus Jakarta Sans', sans-serif;
   box-shadow: 2px 2px 5px var(--shadow-d), -2px -2px 5px var(--shadow-l);
 }
+.shelf-btn .tab-svg { width: 13px; height: 13px; }
+.shelf-btn.is-done { color: #31917B; box-shadow: inset 2px 2px 5px var(--shadow-d), inset -2px -2px 5px var(--shadow-l); }
+.shelf-btn:disabled { cursor: default; }
 .shelf-btn:active { transform: scale(0.94); }
 .shelf-btn.danger { color: #d64668; }
 .rating-badge {
@@ -5021,6 +5144,23 @@ body.no-page-scroll #root {
 .context-item:active { background: var(--bg); }
 .context-item.danger { color: #d64668; }
 .context-item .ic { font-size: 17px; width: 22px; text-align: center; }
+.movie-action-item {
+  width: 100%; border: none; background: transparent; text-align: left;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+.movie-action-item:disabled { cursor: default; }
+.movie-action-item.is-done { color: var(--ink-soft); background: rgba(239,236,247,.58); }
+.movie-action-item.is-done:active { background: rgba(239,236,247,.58); }
+.movie-action-icon {
+  width: 34px; height: 34px; flex: 0 0 34px; display: grid; place-items: center;
+  border-radius: 11px; color: var(--lav-deep); background: var(--bg);
+}
+.movie-action-icon .tab-svg { width: 19px; height: 19px; }
+.movie-action-item.is-done .movie-action-icon { color: #31917B; background: rgba(142,215,199,.2); }
+.movie-action-item.danger .movie-action-icon { color: #d64668; }
+.movie-action-copy { min-width: 0; }
+.movie-action-copy strong { display: block; font-size: 13px; font-weight: 800; }
+.movie-action-copy small { display: block; margin-top: 2px; color: var(--ink-soft); font-size: 9.5px; font-weight: 700; }
 .context-divider { height: 1px; background: rgba(0,0,0,0.06); margin: 4px 8px; }
 .context-empty { padding: 12px; color: var(--ink-soft); font-size: 13px; font-weight: 700; text-align: center; }
 .install-title { font-weight: 800; font-size: 18px; padding: 4px 10px 6px; }
@@ -5152,7 +5292,7 @@ body.no-page-scroll #root {
 <div class="context-overlay" id="install-overlay">
   <div class="context-sheet">
     <div class="context-handle"></div>
-    <img class="install-logo" src="./letop-icon-192.png?v=20260705-watched-badges-v5" alt="Le Top">
+    <img class="install-logo" src="./letop-icon-192.png?v=20260705-ux-polish-v6" alt="Le Top">
     <div class="install-title" id="install-title">Installer Le Top</div>
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
