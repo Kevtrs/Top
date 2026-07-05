@@ -9,9 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Le Top 🍿</title>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260704-badges-cinema-v2">
-<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260704-badges-cinema-v2">
-<link rel="manifest" href="./site.webmanifest?v=20260704-badges-cinema-v2">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260705-saga-badges-v1">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260705-saga-badges-v1">
+<link rel="manifest" href="./site.webmanifest?v=20260705-saga-badges-v1">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -36,9 +36,10 @@ const PROFILE_COLORS = [
 ];
 
 const TMDB_IMG = "https://image.tmdb.org/t/p/w342";
+const TMDB_BACKDROP = "https://image.tmdb.org/t/p/w500";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260704-badges-cinema-v2";
+const PWA_VERSION = "20260705-saga-badges-v1";
 const APP_PUBLIC_URL = "https://kevtrs.github.io/Top/";
 
 const APP_TABS = [
@@ -106,6 +107,155 @@ const CINEMA_CHALLENGE_DEFS = [
   }
 ];
 
+// Ces listes sont volontairement figees aux films sortis au 5 juillet 2026.
+// Une nouvelle suite ne peut donc jamais retirer un badge deja debloque.
+const SAGA_CHALLENGE_DEFS = [
+  {
+    id: "saga-lotr", name: "L'Anneau unique", symbol: "ring",
+    description: "Traverse la Terre du Milieu jusqu'au Mordor.",
+    backdropPath: "/oiwc338EoBgS4sEI2ixAny4KQKg.jpg",
+    movieIds: [120, 121, 122]
+  },
+  {
+    id: "saga-hobbit", name: "Un voyage inattendu", symbol: "mountain",
+    description: "Accompagne Bilbon jusqu'à la Montagne Solitaire.",
+    backdropPath: "/xyXmtuvsoM5J3yNad0nvcetpBdY.jpg",
+    movieIds: [49051, 57158, 122917]
+  },
+  {
+    id: "saga-star-wars", name: "Une galaxie très lointaine", symbol: "stars",
+    description: "Complète les neuf épisodes de la saga Skywalker.",
+    backdropPath: "/yUiXA68FfQeA8cRBhd0Ao0jIRZt.jpg",
+    movieIds: [1893, 1894, 1895, 11, 1891, 1892, 140607, 181808, 181812]
+  },
+  {
+    id: "saga-harry-potter", name: "Maître des Reliques", symbol: "wand",
+    description: "Vis chaque année de Harry à Poudlard.",
+    backdropPath: "/1XAC6RPT01UX9EQGy2JVn5c8pgy.jpg",
+    movieIds: [671, 672, 673, 674, 675, 767, 12444, 12445]
+  },
+  {
+    id: "saga-back-to-future", name: "88 miles à l'heure", symbol: "clock",
+    description: "Boucle les trois voyages de Marty et Doc.",
+    backdropPath: "/5bzPWQ2dFUl2aZKkp7ILJVVkRed.jpg",
+    movieIds: [105, 165, 196]
+  },
+  {
+    id: "saga-jurassic", name: "La vie trouve toujours un chemin", symbol: "claw",
+    description: "Survis à tous les parcs Jurassic.",
+    backdropPath: "/o7LzVmlOSYc3EspyVMC9bsTTARc.jpg",
+    movieIds: [329, 330, 331, 135397, 351286, 507086, 1234821]
+  },
+  {
+    id: "saga-pirates", name: "Le compas ne ment jamais", symbol: "compass",
+    description: "Suis Jack Sparrow sur les cinq mers.",
+    backdropPath: "/uRNgkJSkNBFbbn9fPsEjDIy8Sh3.jpg",
+    movieIds: [22, 58, 285, 1865, 166426]
+  },
+  {
+    id: "saga-matrix", name: "Pilule rouge", symbol: "pill",
+    description: "Réveille-toi et parcours toute la Matrice.",
+    backdropPath: "/tlm8UkiQsitc8rSuIAscQDCnP8d.jpg",
+    movieIds: [603, 604, 605, 624860]
+  },
+  {
+    id: "saga-dark-knight", name: "Chevalier de Gotham", symbol: "bat",
+    description: "Complete la trilogie Batman de Christopher Nolan.",
+    backdropPath: "/9IIBboV7MCT0bTxzXHmWK1Hq558.jpg",
+    movieIds: [272, 155, 49026]
+  },
+  {
+    id: "saga-indiana-jones", name: "Ça appartient à un musée", symbol: "hat",
+    description: "Retrouve les cinq aventures d'Indiana Jones.",
+    backdropPath: "/zPACwR32amTNvzId9qyapCWXYDJ.jpg",
+    movieIds: [85, 87, 89, 217, 335977]
+  },
+  {
+    id: "saga-mission-impossible", name: "Mission accomplie", symbol: "fuse",
+    description: "Accepte les huit missions d'Ethan Hunt.",
+    backdropPath: "/sra8XnL96OyLHENcglmZJg6HA8z.jpg",
+    movieIds: [954, 955, 956, 56292, 177677, 353081, 575264, 575265]
+  },
+  {
+    id: "saga-alien", name: "Dans l'espace, personne...", symbol: "egg",
+    description: "Affronte les sept chapitres principaux d'Alien.",
+    backdropPath: "/AmR3JG1VQVxU8TfAvljUhfSFUOx.jpg",
+    movieIds: [348, 679, 8077, 8078, 70981, 126889, 945961]
+  },
+  {
+    id: "saga-godfather", name: "Une offre impossible à refuser", symbol: "rose",
+    description: "Entre dans la famille Corleone pour toute la trilogie.",
+    backdropPath: "/tSPT36ZKlP2WVHJLM4cQPLSzv3b.jpg",
+    movieIds: [238, 240, 242]
+  },
+  {
+    id: "saga-john-wick", name: "Baba Yaga", symbol: "coin",
+    description: "Traverse les quatre chapitres de John Wick.",
+    backdropPath: "/ff2ti5DkA9UYLzyqhQfI2kZqEuh.jpg",
+    movieIds: [245891, 324552, 458156, 603692]
+  },
+  {
+    id: "saga-rocky-creed", name: "L'œil du tigre", symbol: "gloves",
+    description: "Monte sur le ring pour Rocky puis Creed.",
+    backdropPath: "/xUZ2G8MRGEljqgqLxMJItK4iHfY.jpg",
+    movieIds: [1366, 1367, 1371, 1374, 1375, 1246, 312221, 480530, 677179]
+  },
+  {
+    id: "saga-toy-story", name: "Vers l'infini", symbol: "rocket",
+    description: "Retrouve les jouets dans les cinq Toy Story.",
+    backdropPath: "/3Rfvhy1Nl6sSGJwyjb0QiZzZYlB.jpg",
+    movieIds: [862, 863, 10193, 301528, 1084244]
+  },
+  {
+    id: "saga-mad-max", name: "Route furieuse", symbol: "wheel",
+    description: "Parcours les cinq films sortis de Mad Max.",
+    backdropPath: "/2eYiXlynI2mSuYJPUkHupJm2dJp.jpg",
+    movieIds: [9659, 8810, 9355, 76341, 786892]
+  },
+  {
+    id: "saga-hunger-games", name: "Le geai prend son envol", symbol: "flame",
+    description: "Complète les cinq films sortis de Panem.",
+    backdropPath: "/yVBQ65YBYZ9UhzJ4NGdRgeXtyTL.jpg",
+    movieIds: [70160, 101299, 131631, 131634, 695721]
+  },
+  {
+    id: "saga-fast-furious", name: "La famille avant tout", symbol: "gauge",
+    description: "Boucle les dix films principaux de Fast & Furious.",
+    backdropPath: "/jY9ef5nqY4xIIMu3yzW3qamUCoi.jpg",
+    movieIds: [9799, 584, 9615, 13804, 51497, 82992, 168259, 337339, 385128, 385687]
+  },
+  {
+    id: "saga-infinity", name: "Pierres d'infini", symbol: "stones",
+    description: "Complète les 23 films de l'Infinity Saga Marvel.",
+    backdropPath: "/cyecB7godJ6kNHGONFjUyVN9OX5.jpg",
+    movieIds: [1726, 1724, 10138, 10195, 1771, 24428, 68721, 76338, 100402, 118340, 99861, 102899, 271110, 284052, 283995, 315635, 284053, 284054, 299536, 363088, 299537, 299534, 429617]
+  },
+  {
+    id: "saga-bond", name: "Au service secret", symbol: "barrel", legendary: true,
+    description: "Mène à terme les 25 missions officielles de James Bond.",
+    backdropPath: "/srgq7bzZsuDw7NoGXdazRXp7Hl6.jpg",
+    movieIds: [646, 657, 658, 660, 667, 668, 681, 253, 682, 691, 698, 699, 700, 707, 708, 709, 710, 714, 36643, 36669, 36557, 10764, 37724, 206647, 370172]
+  },
+  {
+    id: "saga-saw", name: "Je veux jouer a un jeu", symbol: "spiral", legendary: true,
+    description: "Survis aux dix pieges de la saga Saw.",
+    backdropPath: "/ok4ot3YbfDYZcINXf91JUfq3maB.jpg",
+    movieIds: [176, 215, 214, 663, 11917, 22804, 41439, 298250, 602734, 951491]
+  },
+  {
+    id: "saga-final-destination", name: "La mort a un plan", symbol: "crack", legendary: true,
+    description: "Échappe au destin dans les six films sortis.",
+    backdropPath: "/7isarjYDEKZ5t1CgcvbuqEUby8P.jpg",
+    movieIds: [9532, 9358, 9286, 19912, 55779, 574475]
+  }
+].map(def => ({
+  ...def,
+  art: "saga",
+  group: def.legendary ? "legendary" : "sagas",
+  threshold: def.movieIds.length,
+  targetLabel: `${def.movieIds.length} films de la saga vus`
+}));
+
 const DIRECTOR_CHALLENGE_OVERRIDES = {
   138: {
     name: "100% Tarantino",
@@ -115,6 +265,7 @@ const DIRECTOR_CHALLENGE_OVERRIDES = {
 
 let challengeMetadataLoading = false;
 let challengeFilmographyLoading = null;
+const sagaMovieDetailsCache = new Map();
 
 const app = initializeApp(FIREBASE_CONFIG);
 const db  = getFirestore(app);
@@ -523,6 +674,27 @@ async function discoverMoviesByGenres(genreIds, params = {}) {
 async function getMovieDetails(id) {
   return await tmdbFetch(`/movie/${id}`, { append_to_response: "videos,credits,keywords" });
 }
+async function getSagaMovieResult(id) {
+  const movieId = Number(id);
+  if (!sagaMovieDetailsCache.has(movieId)) {
+    sagaMovieDetailsCache.set(movieId, getMovieDetails(movieId).then(details => {
+      const director = (details.credits?.crew || []).find(person => person.job === "Director");
+      return {
+        ...details,
+        genre_ids: (details.genres || []).map(genre => Number(genre.id)),
+        keyword_ids: (details.keywords?.keywords || []).map(keyword => Number(keyword.id)),
+        director_id: director?.id || null,
+        director_name: director?.name || null,
+        collection_id: details.belongs_to_collection?.id || null,
+        collection_name: details.belongs_to_collection?.name || null
+      };
+    }).catch(error => {
+      sagaMovieDetailsCache.delete(movieId);
+      throw error;
+    }));
+  }
+  return sagaMovieDetailsCache.get(movieId);
+}
 function bestTrailerFromDetails(details) {
   const videos = details?.videos?.results || [];
   return videos.find(v => v.site === "YouTube" && v.type === "Trailer" && v.official) ||
@@ -566,6 +738,15 @@ function challengeActiveKey(profileId) {
 }
 function challengeUnlocksKey(profileId) {
   return `letop_unlocked_challenges_${profileId}`;
+}
+function unlockedChallengeIds(profileId = currentUser) {
+  if (!profileId) return new Set();
+  try {
+    const ids = JSON.parse(localStorage.getItem(challengeUnlocksKey(profileId)) || "[]");
+    return new Set(Array.isArray(ids) ? ids : []);
+  } catch (e) {
+    return new Set();
+  }
 }
 function challengeFilmographyKey(directorId) {
   return `letop_director_films_${directorId}`;
@@ -672,6 +853,8 @@ function baseChallengeMatchesMovie(movie, challenge) {
 }
 function cinemaChallengeCatalog() {
   const seenMovies = challengeSeenMovies();
+  const seenIds = new Set(seenMovies.map(movie => Number(movie.id)));
+  const unlockedIds = unlockedChallengeIds();
   const groupState = groupChallengeState();
   const base = CINEMA_CHALLENGE_DEFS.map(def => {
     const current = def.social
@@ -679,11 +862,23 @@ function cinemaChallengeCatalog() {
       : seenMovies.filter(movie => baseChallengeMatchesMovie(movie, def)).length;
     return {
       ...def,
+      group: "cinema",
       current,
       available: def.social ? groupState.available : true,
       suggestedMovies: def.social ? groupState.candidates : [],
-      completed: current >= def.threshold
+      completed: current >= def.threshold || unlockedIds.has(def.id)
     };
+  });
+
+  SAGA_CHALLENGE_DEFS.forEach(def => {
+    const current = def.movieIds.filter(id => seenIds.has(Number(id))).length;
+    base.push({
+      ...def,
+      current,
+      missingMovieIds: def.movieIds.filter(id => !seenIds.has(Number(id))),
+      available: true,
+      completed: current === def.threshold || unlockedIds.has(def.id)
+    });
   });
 
   const director = preferredDirectorFromSeen(seenMovies);
@@ -703,6 +898,7 @@ function cinemaChallengeCatalog() {
     base.unshift({
       id: `director-${director.id}`,
       art: "director",
+      group: "auteurs",
       name: override?.name || `Signature ${shortName}`,
       description: override ? "Complète ses dix longs métrages principaux." : "Explore sa mise en scène film après film.",
       targetLabel: override ? `${threshold} films principaux` : "5 films du même réalisateur",
@@ -713,7 +909,7 @@ function cinemaChallengeCatalog() {
       movieIds,
       suggestedMovies: filmography.filter(movie => !getAllMovieIdsForUser(currentUser).has(Number(movie.id))),
       available: true,
-      completed: current >= threshold
+      completed: current >= threshold || unlockedIds.has(`director-${director.id}`)
     });
   }
   return base;
@@ -738,8 +934,40 @@ function challengeMatchesMovie(movie, challenge) {
   if ((movie?._challengeIds || []).includes(challenge.id)) return true;
   return baseChallengeMatchesMovie(movie, challenge);
 }
+function sagaSymbolSvg(symbol) {
+  const symbols = {
+    ring: '<ellipse cx="24" cy="24" rx="15" ry="9"/><ellipse cx="24" cy="24" rx="9" ry="4"/>',
+    mountain: '<path d="m7 35 12-20 7 11 5-8 10 17Z"/><path d="m16 20 3 5 3-4"/>',
+    stars: '<path d="m24 7 2.5 7.5L34 17l-7.5 2.5L24 27l-2.5-7.5L14 17l7.5-2.5Z"/><circle cx="11" cy="32" r="2"/><circle cx="37" cy="34" r="3"/>',
+    wand: '<path d="m11 37 24-24"/><path d="m31 9 2 5 5 2-5 2-2 5-2-5-5-2 5-2Z"/><path d="m9 16 1 3 3 1-3 1-1 3-1-3-3-1 3-1Z"/>',
+    clock: '<circle cx="24" cy="24" r="16"/><path d="M24 14v11l8 5"/><path d="M8 8h7M33 8h7"/>',
+    claw: '<path d="M13 35c6-8 6-15 5-23M24 37c4-10 3-18 1-26M34 35c2-8 0-15-3-21"/>',
+    compass: '<circle cx="24" cy="24" r="17"/><path d="m29 18-4 11-6 3 4-11Z"/><path d="M24 4v5M24 39v5M4 24h5M39 24h5"/>',
+    pill: '<path d="M14 34a9 9 0 0 1 0-13l8-8a9 9 0 1 1 13 13l-8 8a9 9 0 0 1-13 0Z"/><path d="m18 17 13 13"/>',
+    bat: '<path d="M5 18c6 0 9 3 12 7l3-8 4 5 4-5 3 8c3-4 6-7 12-7-2 11-9 17-19 22C14 35 7 29 5 18Z"/>',
+    hat: '<path d="M8 31c9 3 23 3 32 0M14 29l4-15h12l5 15M18 20c5 2 9 2 14 0"/>',
+    fuse: '<circle cx="18" cy="31" r="9"/><path d="M24 24c4-8 8-8 11-8"/><path d="m36 7 1 5 5 1-5 1-1 5-1-5-5-1 5-1Z"/>',
+    egg: '<path d="M24 7c9 0 15 18 15 27 0 6-7 9-15 9S9 40 9 34C9 25 15 7 24 7Z"/><path d="m18 18 7 5-5 7 9 5"/>',
+    rose: '<path d="M24 27c-8 0-11-10-4-14 4-7 14-3 13 4 5 5 0 12-9 10Z"/><path d="M24 27v15M24 35c-6-4-10-2-12 1M24 33c6-4 10-2 12 1"/>',
+    coin: '<circle cx="24" cy="24" r="17"/><circle cx="24" cy="24" r="12"/><path d="m24 16 2 5 5 .5-4 3 1 5-4-3-4 3 1-5-4-3 5-.5Z"/>',
+    gloves: '<path d="M8 13c7-3 13 1 14 8l-1 14-10 3-5-10Z"/><path d="M40 13c-7-3-13 1-14 8l1 14 10 3 5-10Z"/><path d="M11 31h10M27 31h10"/>',
+    rocket: '<path d="M27 7c8 6 10 14 6 23l-8 8-8-8c-3-9 1-18 10-23Z"/><circle cx="25" cy="20" r="4"/><path d="m17 28-7 3 5-10M33 28l6 4-4-11M21 38l3 6 3-6"/>',
+    wheel: '<circle cx="24" cy="24" r="17"/><circle cx="24" cy="24" r="5"/><path d="M24 7v12M24 29v12M7 24h12M29 24h12M12 12l8 8M28 28l8 8M36 12l-8 8M20 28l-8 8"/>',
+    flame: '<path d="M25 5c3 9-4 10 1 17 4-4 7-8 7-12 7 8 9 15 5 23-3 7-10 10-17 8C10 39 6 27 12 18c1 7 5 8 7 3 2-5 1-10 6-16Z"/>',
+    gauge: '<path d="M7 34a18 18 0 0 1 34 0"/><path d="m24 30 10-12"/><circle cx="24" cy="31" r="4"/><path d="M11 31h4M33 31h4M15 20l3 3M30 23l3-3"/>',
+    stones: '<path d="M14 39 10 21l7-12 7 9 7-9 7 12-4 18Z"/><circle cx="17" cy="23" r="2"/><circle cx="24" cy="22" r="2"/><circle cx="31" cy="23" r="2"/><circle cx="20" cy="30" r="2"/><circle cx="28" cy="30" r="2"/>',
+    barrel: '<circle cx="24" cy="24" r="18"/><circle cx="24" cy="24" r="8"/><path d="M24 6v10M24 32v10M6 24h10M32 24h10M11 11l7 7M30 30l7 7M37 11l-7 7M18 30l-7 7"/>',
+    spiral: '<path d="M38 25c0 9-7 16-16 16S7 34 7 25 14 9 24 9c8 0 14 6 14 13 0 8-6 13-13 13-6 0-11-5-11-10 0-6 4-10 10-10 5 0 8 4 8 8 0 4-3 7-7 7-3 0-5-2-5-5"/>',
+    crack: '<path d="M24 5 19 17l6 4-8 8 6 3-5 11M26 20l9-7M20 30l9 7M12 22l8 2"/>'
+  };
+  return `<svg viewBox="0 0 48 48" aria-hidden="true">${symbols[symbol] || symbols.stars}</svg>`;
+}
 function challengeBadgeArtHtml(challenge, extraClass = "") {
   const art = challenge?.art || "classic";
+  if (art === "saga") {
+    const image = `${TMDB_BACKDROP}${challenge.backdropPath || ""}`;
+    return `<div class="cinema-saga-art ${challenge.legendary ? "legendary" : ""} ${extraClass}" style="--saga-image:url('${escapeAttr(image)}')" role="img" aria-label="${escapeAttr(challenge?.name || "Badge saga")}"><span>${sagaSymbolSvg(challenge.symbol)}</span></div>`;
+  }
   const common = `class="cinema-badge-art art-${art} ${extraClass}" viewBox="0 0 96 96" role="img" aria-label="${escapeAttr(challenge?.name || "Badge cinéma")}"`;
   if (art === "horror") return `<svg ${common}><path class="badge-back" d="M48 5 82 22v37c0 17-14 27-34 32C28 86 14 76 14 59V22Z"/><path class="badge-light" d="M58 20a23 23 0 1 0 18 38A28 28 0 1 1 58 20Z"/><path class="badge-hot" d="M31 55c8-8 26-8 34 0-10 12-24 12-34 0Z"/><circle class="badge-back" cx="41" cy="54" r="3"/><circle class="badge-back" cx="55" cy="54" r="3"/></svg>`;
   if (art === "crime") return `<svg ${common}><path class="badge-back" d="M18 18h60v60H18z"/><path class="badge-light" d="M30 27h36v42H30z"/><path class="badge-hot" d="M48 32c-10 0-16 8-16 18 0 8 4 14 9 18M48 38c-7 0-10 5-10 12 0 6 3 11 7 14M48 44c-3 0-5 3-5 7 0 4 2 7 5 9M48 32c10 0 16 8 16 18 0 8-4 14-9 18M48 38c7 0 10 5 10 12 0 6-3 11-7 14M48 44c3 0 5 3 5 7 0 4-2 7-5 9" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/></svg>`;
@@ -778,7 +1006,13 @@ function renderChallengesSheet() {
   if (!gallery) return;
   const active = activeCinemaChallenge();
   const catalog = cinemaChallengeCatalog();
-  gallery.innerHTML = catalog.map(challenge => {
+  const groups = [
+    { id: "auteurs", title: "Signatures", subtitle: "Les cinéastes qui marquent ton Top" },
+    { id: "cinema", title: "Défis cinéma", subtitle: "Des habitudes qui racontent tes goûts" },
+    { id: "sagas", title: "Grandes sagas", subtitle: "Tous les films sont nécessaires" },
+    { id: "legendary", title: "Collections légendaires", subtitle: "Les marathons les plus exigeants" }
+  ];
+  const tileHtml = challenge => {
     const percent = Math.round(challengeProgress(challenge) * 100);
     const selected = active?.id === challenge.id;
     return `
@@ -791,6 +1025,11 @@ function renderChallengesSheet() {
           <small>${challenge.completed ? "Débloqué" : `${challenge.current} / ${challenge.threshold}`}${selected ? " · objectif actif" : ""}</small>
         </div>
       </button>`;
+  };
+  gallery.innerHTML = groups.map(group => {
+    const challenges = catalog.filter(challenge => challenge.group === group.id);
+    if (!challenges.length) return "";
+    return `<section class="cinema-challenge-group"><div class="cinema-challenge-group-heading"><strong>${escapeHtml(group.title)}</strong><span>${escapeHtml(group.subtitle)}</span></div>${challenges.map(tileHtml).join("")}</section>`;
   }).join("");
   gallery.querySelectorAll(".cinema-challenge-tile:not([disabled])").forEach(button => {
     button.addEventListener("click", () => {
@@ -3332,6 +3571,14 @@ async function ignoreRecommendedMovie(movie, card = null) {
 function challengeRecommendationJobs(challenge) {
   if (!challenge || challenge.completed) return [];
   const jobs = [];
+  if (challenge.missingMovieIds?.length) {
+    jobs.push(Promise.all(challenge.missingMovieIds.slice(0, 14).map(id =>
+      getSagaMovieResult(id).catch(() => null)
+    )).then(movies => movies.filter(Boolean).map(movie => ({
+      movie,
+      meta: { challengeId: challenge.id, sourceWeight: 12 }
+    }))));
+  }
   if (challenge.suggestedMovies?.length) {
     jobs.push(Promise.resolve(challenge.suggestedMovies.map(movie => ({
       movie: challenge.directorId
@@ -4126,6 +4373,36 @@ body.no-page-scroll #root {
 .cinema-badge-art.art-social { --badge-back:#6B55A5; --badge-light:#F8F3FF; --badge-hot:#83D8C7; color:#6B55A5; }
 .cinema-badge-art.art-director { --badge-back:#4E416C; --badge-light:#FFF3D1; --badge-hot:#E9A0C1; color:#B85E88; }
 .cinema-badge-art.art-director .badge-hot { fill: none; stroke: var(--badge-hot); }
+.cinema-saga-art {
+  width: 100%; height: 100%; position: relative; overflow: hidden;
+  background-image: linear-gradient(155deg, rgba(30,25,48,.05), rgba(30,25,48,.7)), var(--saga-image);
+  background-size: cover; background-position: center;
+  clip-path: polygon(16% 5%, 84% 5%, 98% 24%, 91% 79%, 50% 98%, 9% 79%, 2% 24%);
+  filter: drop-shadow(0 7px 8px rgba(45,42,61,.18));
+}
+.cinema-saga-art::before {
+  content: ""; position: absolute; inset: 5px;
+  border: 2px solid rgba(255,255,255,.72);
+  clip-path: inherit; pointer-events: none;
+}
+.cinema-saga-art > span {
+  position: absolute; width: 36%; aspect-ratio: 1; right: 8%; bottom: 8%;
+  display: grid; place-items: center; border-radius: 50%; color: #fff;
+  background: rgba(48,40,73,.78); border: 1px solid rgba(255,255,255,.8);
+  box-shadow: 0 4px 10px rgba(26,21,43,.3); backdrop-filter: blur(4px);
+}
+.cinema-saga-art > span svg {
+  width: 70%; height: 70%; fill: none; stroke: currentColor; stroke-width: 2.4;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.cinema-saga-art.legendary {
+  clip-path: polygon(50% 0, 84% 10%, 100% 38%, 93% 77%, 68% 100%, 32% 100%, 7% 77%, 0 38%, 16% 10%);
+  background-image: linear-gradient(155deg, rgba(20,16,30,.03), rgba(20,16,30,.78)), var(--saga-image);
+}
+.cinema-saga-art.legendary::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(130deg, transparent 25%, rgba(255,220,137,.35) 48%, transparent 70%);
+}
 .cinema-challenge-copy { min-width: 0; position: relative; z-index: 1; }
 .cinema-challenge-kicker {
   color: var(--lav-deep); font-family: 'DM Mono', monospace; font-size: 9px; font-weight: 700;
@@ -4154,7 +4431,11 @@ body.no-page-scroll #root {
 .cinema-challenges-sheet-heading { padding: 0 2px 12px; }
 .cinema-challenges-sheet-heading .install-title { margin: 0; text-align: left; }
 .cinema-challenges-sheet-heading p { color: var(--ink-soft); font-size: 12px; line-height: 1.45; font-weight: 600; margin-top: 4px; }
-#cinema-challenge-gallery { display: flex; flex-direction: column; gap: 10px; padding: 2px 0 8px; }
+#cinema-challenge-gallery { display: flex; flex-direction: column; gap: 18px; padding: 2px 0 8px; }
+.cinema-challenge-group { display: flex; flex-direction: column; gap: 10px; }
+.cinema-challenge-group-heading { padding: 2px 3px 0; }
+.cinema-challenge-group-heading strong { display: block; font-size: 13px; font-weight: 800; color: var(--ink); }
+.cinema-challenge-group-heading span { display: block; margin-top: 2px; font-size: 10px; font-weight: 700; color: var(--ink-soft); }
 .cinema-challenge-tile {
   width: 100%; display: grid; grid-template-columns: 68px minmax(0,1fr); gap: 12px; align-items: center;
   border: none; border-radius: 18px; padding: 11px; text-align: left; color: var(--ink);
@@ -4165,6 +4446,7 @@ body.no-page-scroll #root {
 .cinema-challenge-tile:active { transform: scale(.98); }
 .cinema-challenge-tile.selected { box-shadow: inset 0 0 0 2px var(--lav), 4px 4px 10px var(--shadow-d), -4px -4px 10px var(--shadow-l); }
 .cinema-challenge-tile.completed { background: linear-gradient(120deg, rgba(255,255,255,.96), rgba(255,217,160,.28)); }
+.cinema-challenge-tile:not(.completed) .cinema-saga-art { filter: grayscale(.42) saturate(.7) drop-shadow(0 7px 8px rgba(45,42,61,.12)); }
 .cinema-challenge-tile:disabled { opacity: .48; }
 .cinema-challenge-tile-art { width: 68px; height: 68px; }
 .cinema-challenge-tile-copy { min-width: 0; }
@@ -4523,7 +4805,7 @@ body.no-page-scroll #root {
 <div class="context-overlay" id="install-overlay">
   <div class="context-sheet">
     <div class="context-handle"></div>
-    <img class="install-logo" src="./letop-icon-192.png?v=20260704-badges-cinema-v2" alt="Le Top">
+    <img class="install-logo" src="./letop-icon-192.png?v=20260705-saga-badges-v1" alt="Le Top">
     <div class="install-title" id="install-title">Installer Le Top</div>
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
