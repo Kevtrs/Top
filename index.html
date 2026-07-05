@@ -9,9 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Le Top 🍿</title>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260705-ux-polish-v6">
-<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260705-ux-polish-v6">
-<link rel="manifest" href="./site.webmanifest?v=20260705-ux-polish-v6">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260705-premium-ux-v7">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260705-premium-ux-v7">
+<link rel="manifest" href="./site.webmanifest?v=20260705-premium-ux-v7">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -40,7 +40,7 @@ const TMDB_BACKDROP = "https://image.tmdb.org/t/p/w500";
 const TMDB_PROFILE = "https://image.tmdb.org/t/p/w185";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260705-ux-polish-v6";
+const PWA_VERSION = "20260705-premium-ux-v7";
 const APP_PUBLIC_URL = "https://kevtrs.github.io/Top/";
 
 const APP_TABS = [
@@ -309,6 +309,7 @@ let allRankings  = {};
 let allWatched = {};
 let allWatchlist = {};
 let activeTab = "search";
+const tabScrollPositions = {};
 let badgeGalleryFilter = "progress";
 let recoExpanded = false;
 let recentExpanded = false;
@@ -341,6 +342,7 @@ let profilesServerConfirmed = false;
 let foregroundPushListening = false;
 let installGateSheetShown = false;
 let scrollLockFrame = null;
+let toastTimer = null;
 
 const PENDING_PUSH_TOKEN_KEY = "letop_pending_push_token";
 const PUSH_BOUND_KEY = "letop_push_bound";
@@ -381,11 +383,13 @@ async function saveRankingToCloud(userId, rankedArray) {
   if (userId === currentUser) await ensureProfileInCloud(userId);
   const profile = profilePayload(userId);
   allRankings = { ...allRankings, [userId]: rankedArray };
+  updateCollectionSummaries();
   await setDoc(doc(db, "rankings", userId), { movies: rankedArray, updatedAt: Date.now(), ...profileMetaPayload(profile) }, { merge: true });
 }
 async function saveWatchedToCloud(userId, watchedArray) {
   if (!userId) return;
   allWatched = { ...allWatched, [userId]: watchedArray };
+  updateCollectionSummaries();
   if (userId === currentUser) await ensureProfileInCloud(userId);
   const profile = profilePayload(userId);
   await setDoc(doc(db, "watched", userId), { movies: watchedArray, updatedAt: Date.now(), ...profileMetaPayload(profile) }, { merge: true });
@@ -395,6 +399,7 @@ async function saveWatchlistToCloud(userId, watchlistArray) {
   if (userId === currentUser) await ensureProfileInCloud(userId);
   const profile = profilePayload(userId);
   allWatchlist = { ...allWatchlist, [userId]: watchlistArray };
+  updateCollectionSummaries();
   await setDoc(doc(db, "watchlist", userId), { movies: watchlistArray, updatedAt: Date.now(), ...profileMetaPayload(profile) }, { merge: true });
 }
 function listenAllRankings(cb) {
@@ -1449,6 +1454,10 @@ function updatePageScrollLock() {
   const overlayOpen = !!document.querySelector(".context-overlay.show");
   const shouldLock = overlayOpen || !pageNeedsScroll;
 
+  document.querySelectorAll(".context-overlay").forEach(overlay => {
+    overlay.setAttribute("aria-hidden", String(!overlay.classList.contains("show")));
+  });
+
   document.documentElement.classList.toggle("no-page-scroll", shouldLock);
   document.body.classList.toggle("no-page-scroll", shouldLock);
   if (!pageNeedsScroll && window.scrollY !== 0) window.scrollTo(0, 0);
@@ -1938,7 +1947,8 @@ function renderSearchBox(prefix, placeholder) {
   <div class="search-wrap">
     <div class="search-box" id="${boxId}">
       <span class="search-icon">${tabIconHtml("search")}</span>
-      <input type="text" id="${inputId}" placeholder="${escapeAttr(placeholder)}">
+      <input type="search" id="${inputId}" placeholder="${escapeAttr(placeholder)}" autocomplete="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" aria-label="${escapeAttr(placeholder)}">
+      <button class="search-clear" id="${inputId}-clear" type="button" aria-label="Effacer la recherche" hidden>${tabIconHtml("x")}</button>
     </div>
   </div>
   <div id="${resultsId}"></div>`;
@@ -1949,10 +1959,10 @@ function renderSearchTabContent(myIncoming) {
     ${renderIncomingRecosHtml(myIncoming)}
     ${renderSearchBox("global", "Cherche un film...")}
     <div class="quick-home-grid">
-      <button class="quick-home-card" data-go-tab="top" type="button">${surfaceIconHtml("crown", "quick-home-icon")}<strong>Top</strong><small>Ton classement</small></button>
-      <button class="quick-home-card" data-go-tab="watched" type="button">${surfaceIconHtml("ticket", "quick-home-icon")}<strong>Vus</strong><small>Films notés</small></button>
-      <button class="quick-home-card" data-go-tab="watchlist" type="button">${surfaceIconHtml("popcorn", "quick-home-icon")}<strong>À voir</strong><small>Pour plus tard</small></button>
-      <button class="quick-home-card" data-go-tab="friends" type="button">${surfaceIconHtml("users", "quick-home-icon")}<strong>Amis</strong><small>Leurs tops</small></button>
+      <button class="quick-home-card" data-go-tab="top" type="button">${surfaceIconHtml("crown", "quick-home-icon")}<strong>Top</strong><small id="quick-summary-top">${myRanked().length} film${myRanked().length > 1 ? "s" : ""} classé${myRanked().length > 1 ? "s" : ""}</small></button>
+      <button class="quick-home-card" data-go-tab="watched" type="button">${surfaceIconHtml("ticket", "quick-home-icon")}<strong>Vus</strong><small id="quick-summary-watched">${myWatched().length} film${myWatched().length > 1 ? "s" : ""} noté${myWatched().length > 1 ? "s" : ""}</small></button>
+      <button class="quick-home-card" data-go-tab="watchlist" type="button">${surfaceIconHtml("popcorn", "quick-home-icon")}<strong>À voir</strong><small id="quick-summary-watchlist">${myWatchlist().length} film${myWatchlist().length > 1 ? "s" : ""} gardé${myWatchlist().length > 1 ? "s" : ""}</small></button>
+      <button class="quick-home-card" data-go-tab="friends" type="button">${surfaceIconHtml("users", "quick-home-icon")}<strong>Amis</strong><small id="quick-summary-friends">${friendProfiles().length} profil${friendProfiles().length > 1 ? "s" : ""}</small></button>
     </div>
 
     <div class="accordion-section">
@@ -1988,21 +1998,57 @@ function renderSearchTabContent(myIncoming) {
     </div>`;
 }
 
+function renderCollectionIntro(kicker, title, detail, summaryId = "") {
+  return `<header class="collection-intro"><span>${escapeHtml(kicker)}</span><h1>${escapeHtml(title)}</h1><p${summaryId ? ` id="collection-summary-${escapeAttr(summaryId)}"` : ""}>${escapeHtml(detail)}</p></header>`;
+}
+
+function watchedAverage() {
+  const ratings = myWatched().map(movie => Number(movie.rating)).filter(Number.isFinite);
+  if (!ratings.length) return null;
+  return ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length;
+}
+
+function updateCollectionSummaries() {
+  const topCount = myRanked().length;
+  const watchedCount = myWatched().length;
+  const watchlistCount = myWatchlist().length;
+  const friendsCount = friendProfiles().length;
+  const average = watchedAverage();
+  const summaries = {
+    "quick-summary-top": `${topCount} film${topCount > 1 ? "s" : ""} classé${topCount > 1 ? "s" : ""}`,
+    "quick-summary-watched": `${watchedCount} film${watchedCount > 1 ? "s" : ""} noté${watchedCount > 1 ? "s" : ""}`,
+    "quick-summary-watchlist": `${watchlistCount} film${watchlistCount > 1 ? "s" : ""} gardé${watchlistCount > 1 ? "s" : ""}`,
+    "quick-summary-friends": `${friendsCount} profil${friendsCount > 1 ? "s" : ""}`,
+    "collection-summary-top": `${topCount} film${topCount > 1 ? "s" : ""} classé${topCount > 1 ? "s" : ""}`,
+    "collection-summary-watched": average === null ? `${watchedCount} film${watchedCount > 1 ? "s" : ""} noté${watchedCount > 1 ? "s" : ""}` : `${watchedCount} film${watchedCount > 1 ? "s" : ""} · moyenne ${average.toFixed(1).replace(".", ",")}/10`,
+    "collection-summary-watchlist": `${watchlistCount} film${watchlistCount > 1 ? "s" : ""} gardé${watchlistCount > 1 ? "s" : ""} pour plus tard`
+  };
+  Object.entries(summaries).forEach(([id, text]) => {
+    const element = document.getElementById(id);
+    if (element) element.textContent = text;
+  });
+}
+
 function renderTopTabContent() {
+  const count = myRanked().length;
   return `
-    <div class="section-label">Ton classement</div>
+    ${renderCollectionIntro("CLASSEMENT", "Mon Top", `${count} film${count > 1 ? "s" : ""} classé${count > 1 ? "s" : ""}`, "top")}
     <div class="rank-list" id="rank-list"></div>`;
 }
 
 function renderWatchedTabContent() {
+  const count = myWatched().length;
+  const average = watchedAverage();
+  const detail = average === null ? `${count} film${count > 1 ? "s" : ""} noté${count > 1 ? "s" : ""}` : `${count} film${count > 1 ? "s" : ""} · moyenne ${average.toFixed(1).replace(".", ",")}/10`;
   return `
-    <div class="section-label">Films vus</div>
+    ${renderCollectionIntro("JOURNAL", "Films vus", detail, "watched")}
     <div class="watched-list" id="watched-list"></div>`;
 }
 
 function renderWatchlistTabContent() {
+  const count = myWatchlist().length;
   return `
-    <div class="section-label">À voir</div>
+    ${renderCollectionIntro("LISTE", "À voir", `${count} film${count > 1 ? "s" : ""} gardé${count > 1 ? "s" : ""} pour plus tard`, "watchlist")}
     <div class="watchlist-list" id="watchlist-list"></div>`;
 }
 
@@ -2039,7 +2085,7 @@ function renderFriendsTabContent(viewed) {
     const watchedCount = Object.keys(allWatched).length;
     const watchlistCount = Object.keys(allWatchlist).length;
     return `
-      <div class="section-label">Amis</div>
+      ${renderCollectionIntro("PROCHES", "Amis", "Aucun autre profil synchronisé")}
       <div class="empty-state">
         <div>Aucun autre compte synchronisé pour l'instant. Ouvre Le Top sur l'autre appareil avec la dernière version pour qu'il publie son profil.</div>
         <small>Synchro : ${knownCount} profil${knownCount > 1 ? "s" : ""} repéré${knownCount > 1 ? "s" : ""}, ${topCount} Top, ${watchedCount} Vus, ${watchlistCount} À voir.</small>
@@ -2047,6 +2093,7 @@ function renderFriendsTabContent(viewed) {
       </div>`;
   }
   return `
+    ${renderCollectionIntro("PROCHES", "Amis", `${friends.length} profil${friends.length > 1 ? "s" : ""} dans le groupe`)}
     <div class="friend-grid">
       ${friends.map(p => `
         <button class="friend-card ${p.id === viewingUser ? "active" : ""}" data-id="${escapeAttr(p.id)}" style="--pc:${escapeAttr(p.color)}" type="button">
@@ -2175,38 +2222,46 @@ function renderActiveTabView() {
   }
 }
 
+function attachSearchControls(input, box, zone, runSearchHandler) {
+  if (!box || !input || !zone) return;
+  const clearButton = document.getElementById(`${input.id}-clear`);
+  let searchTimeout;
+  const syncClearButton = () => {
+    if (clearButton) clearButton.hidden = !input.value;
+  };
+  const clearSearch = () => {
+    clearTimeout(searchTimeout);
+    input.value = "";
+    zone.innerHTML = "";
+    syncClearButton();
+    input.focus({ preventScroll: true });
+  };
+  input.addEventListener("focus", () => box.classList.add("focused"));
+  input.addEventListener("blur", () => box.classList.remove("focused"));
+  input.addEventListener("input", () => {
+    clearTimeout(searchTimeout);
+    syncClearButton();
+    const query = input.value;
+    if (!query.trim()) { zone.innerHTML = ""; return; }
+    zone.innerHTML = `<div class="skeleton-grid" aria-label="Recherche en cours">${Array(6).fill('<div class="skeleton-card"></div>').join("")}</div>`;
+    searchTimeout = setTimeout(() => runSearchHandler(query), 350);
+  });
+  clearButton?.addEventListener("click", clearSearch);
+  syncClearButton();
+}
+
 function attachShelfSearch(mode) {
   const box = document.getElementById(`${mode}-search-box`);
   const input = document.getElementById(`${mode}-search-input`);
   const zone = document.getElementById(`${mode}-results-zone`);
-  if (!box || !input || !zone) return;
-  let searchTimeout;
-  input.addEventListener("focus", () => box.classList.add("focused"));
-  input.addEventListener("blur", () => box.classList.remove("focused"));
-  input.addEventListener("input", (e) => {
-    clearTimeout(searchTimeout);
-    const q = e.target.value;
-    if (!q.trim()) { zone.innerHTML = ""; return; }
-    zone.innerHTML = `<div class="skeleton-grid">${Array(6).fill('<div class="skeleton-card"></div>').join("")}</div>`;
-    searchTimeout = setTimeout(() => runShelfSearch(q, mode), 350);
-  });
+  attachSearchControls(input, box, zone, query => runShelfSearch(query, mode));
 }
 
 function attachGlobalSearch() {
   const box = document.getElementById("global-search-box");
   const input = document.getElementById("global-search-input");
   const zone = document.getElementById("global-results-zone");
-  if (!box || !input || !zone) return;
-  let searchTimeout;
-  input.addEventListener("focus", () => box.classList.add("focused"));
-  input.addEventListener("blur", () => box.classList.remove("focused"));
-  input.addEventListener("input", (e) => {
-    clearTimeout(searchTimeout);
-    const q = e.target.value;
-    if (!q.trim()) { zone.innerHTML = ""; return; }
-    zone.innerHTML = `<div class="skeleton-grid">${Array(6).fill('<div class="skeleton-card"></div>').join("")}</div>`;
-    searchTimeout = setTimeout(() => runGlobalSearch(q), 350);
-  });
+  attachSearchControls(input, box, zone, runGlobalSearch);
 }
 
 function setupTabBarAnimation() {
@@ -2225,18 +2280,26 @@ function attachAppEvents() {
   document.querySelectorAll(".app-tab-item").forEach(btn => {
     btn.addEventListener("click", () => {
       const nextTab = btn.dataset.tab;
-      if (nextTab === activeTab) return;
+      if (nextTab === activeTab) {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        tabScrollPositions[activeTab] = 0;
+        return;
+      }
+      tabScrollPositions[activeTab] = window.scrollY;
       activeTab = nextTab;
       if (activeTab !== "friends") viewingUser = currentUser;
-      window.scrollTo({ top: 0, behavior: "smooth" });
       renderPage();
+      requestAnimationFrame(() => window.scrollTo({ top: tabScrollPositions[activeTab] || 0, behavior: "auto" }));
     });
   });
   document.querySelectorAll(".quick-home-card, .empty-state-action").forEach(btn => {
     btn.addEventListener("click", () => {
+      tabScrollPositions[activeTab] = window.scrollY;
       activeTab = btn.dataset.goTab;
+      tabScrollPositions[activeTab] = 0;
       if (activeTab !== "friends") viewingUser = currentUser;
       renderPage();
+      requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
     });
   });
   document.querySelectorAll(".badge-filter-btn").forEach(btn => {
@@ -2289,16 +2352,7 @@ function attachAppEvents() {
   const searchBox = document.getElementById("search-box");
   const searchInput = document.getElementById("search-input");
   if (searchInput) {
-    searchInput.addEventListener("focus", () => searchBox.classList.add("focused"));
-    searchInput.addEventListener("blur", () => searchBox.classList.remove("focused"));
-    let searchTimeout;
-    searchInput.addEventListener("input", (e) => {
-      clearTimeout(searchTimeout);
-      const q = e.target.value;
-      if (!q.trim()) { document.getElementById("search-results-zone").innerHTML = ""; return; }
-      document.getElementById("search-results-zone").innerHTML = `<div class="skeleton-grid">${Array(6).fill('<div class="skeleton-card"></div>').join("")}</div>`;
-      searchTimeout = setTimeout(() => runSearch(q), 350);
-    });
+    attachSearchControls(searchInput, searchBox, document.getElementById("search-results-zone"), runSearch);
   }
 
   attachGlobalSearch();
@@ -2327,11 +2381,23 @@ function toggleAccordion(prefix, expand) {
   header?.setAttribute("aria-expanded", String(expand));
 }
 
-function showToast(msg) {
+function showToast(msg, action = null) {
   const t = document.getElementById("toast");
-  t.textContent = msg;
+  if (!t) return;
+  clearTimeout(toastTimer);
+  t.innerHTML = `<span>${escapeHtml(msg)}</span>${action ? `<button type="button">${escapeHtml(action.label || "Annuler")}</button>` : ""}`;
+  t.classList.toggle("has-action", !!action);
   t.classList.add("show");
-  setTimeout(() => t.classList.remove("show"), 2200);
+  t.querySelector("button")?.addEventListener("click", () => {
+    clearTimeout(toastTimer);
+    t.classList.remove("show");
+    action?.onClick?.();
+  }, { once: true });
+  toastTimer = setTimeout(() => t.classList.remove("show"), action ? 5200 : 2400);
+}
+
+function searchFeedbackHtml(title, detail) {
+  return `<div class="search-feedback">${surfaceIconHtml("search", "search-feedback-icon")}<strong>${escapeHtml(title)}</strong><p>${escapeHtml(detail)}</p></div>`;
 }
 
 function fireConfetti(originEl) {
@@ -2367,7 +2433,7 @@ async function runSearch(query) {
     if (!document.body.contains(zone) || input.value !== query) return;
     const allIds = getAllMovieIdsForUser(currentUser);
     if (!results.length) {
-      zone.innerHTML = `<div style="padding:20px;text-align:center;color:var(--ink-faint);font-size:13px;font-weight:600">Aucun résultat</div>`;
+      zone.innerHTML = searchFeedbackHtml("Aucun film trouvé", "Essaie un autre titre ou vérifie l'orthographe.");
       return;
     }
     zone.innerHTML = `<div class="search-results">${results.slice(0,9).map(m => {
@@ -2401,7 +2467,7 @@ async function runSearch(query) {
     });
   } catch (e) {
     if (!document.body.contains(zone) || input.value !== query) return;
-    zone.innerHTML = `<div style="padding:20px;text-align:center;color:var(--ink-faint);font-size:13px;font-weight:600">Erreur — vérifie ta clé API</div>`;
+    zone.innerHTML = searchFeedbackHtml("Recherche indisponible", "Vérifie ta connexion puis réessaie.");
   }
 }
 
@@ -2413,7 +2479,7 @@ async function runGlobalSearch(query) {
     const results = await searchMovies(query);
     if (!document.body.contains(zone) || input.value !== query) return;
     if (!results.length) {
-      zone.innerHTML = `<div style="padding:20px;text-align:center;color:var(--ink-faint);font-size:13px;font-weight:600">Aucun résultat</div>`;
+      zone.innerHTML = searchFeedbackHtml("Aucun film trouvé", "Essaie un autre titre ou vérifie l'orthographe.");
       return;
     }
     zone.innerHTML = `<div class="search-results">${results.slice(0,9).map(m => {
@@ -2423,10 +2489,10 @@ async function runGlobalSearch(query) {
       const state = badgeMovieState(m.id);
       const stateHtml = state.className === "new" ? "" : `<span class="search-movie-state ${state.className}">${escapeHtml(state.label)}</span>`;
       return `
-      <div class="poster-pick" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(m)))}'>
-        ${poster ? `<div class="poster-pick-media"><img src="${poster}" alt="${escapeAttr(m.title)}">${stateHtml}</div>` : `<div style="aspect-ratio:2/3;background:#E8E4F5;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--ink-faint);padding:6px;text-align:center">Pas d'affiche</div>`}
+      <button class="poster-pick" type="button" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(m)))}' aria-label="Ouvrir ${escapeAttr(m.title)}${state.className === "new" ? "" : `, ${escapeAttr(state.label)}`}">
+        ${poster ? `<div class="poster-pick-media"><img src="${poster}" alt="">${stateHtml}</div>` : `<div class="poster-pick-media poster-placeholder"><span>Pas d'affiche</span>${stateHtml}</div>`}
         <div class="poster-pick-title">${title}${year}</div>
-      </div>`;
+      </button>`;
     }).join("")}</div>`;
 
     zone.querySelectorAll(".poster-pick").forEach(card => {
@@ -2437,7 +2503,7 @@ async function runGlobalSearch(query) {
     });
   } catch (e) {
     if (!document.body.contains(zone) || input.value !== query) return;
-    zone.innerHTML = `<div style="padding:20px;text-align:center;color:var(--ink-faint);font-size:13px;font-weight:600">Erreur de recherche</div>`;
+    zone.innerHTML = searchFeedbackHtml("Recherche indisponible", "Vérifie ta connexion puis réessaie.");
   }
 }
 
@@ -2450,7 +2516,7 @@ async function runShelfSearch(query, mode) {
     if (!document.body.contains(zone) || input.value !== query) return;
     const currentIds = new Set((mode === "watched" ? myWatched() : myWatchlist()).map(m => m.id));
     if (!results.length) {
-      zone.innerHTML = `<div style="padding:20px;text-align:center;color:var(--ink-faint);font-size:13px;font-weight:600">Aucun résultat</div>`;
+      zone.innerHTML = searchFeedbackHtml("Aucun film trouvé", "Essaie un autre titre ou vérifie l'orthographe.");
       return;
     }
     zone.innerHTML = `<div class="search-results">${results.slice(0,9).map(m => {
@@ -2479,7 +2545,7 @@ async function runShelfSearch(query, mode) {
     });
   } catch (e) {
     if (!document.body.contains(zone) || input.value !== query) return;
-    zone.innerHTML = `<div style="padding:20px;text-align:center;color:var(--ink-faint);font-size:13px;font-weight:600">Erreur de recherche</div>`;
+    zone.innerHTML = searchFeedbackHtml("Recherche indisponible", "Vérifie ta connexion puis réessaie.");
   }
 }
 
@@ -2571,9 +2637,22 @@ async function addToWatched(movie, rating) {
 }
 
 function removeFromWatched(movieId) {
-  const updated = myWatched().filter(m => m.id !== movieId);
+  const previous = [...myWatched()];
+  const removedIndex = previous.findIndex(m => m.id === movieId);
+  const removed = previous[removedIndex];
+  const updated = previous.filter(m => m.id !== movieId);
+  if (!removed) return;
   saveWatchedToCloud(currentUser, updated).catch(() => showToast("Erreur d'enregistrement"));
   renderWatchedList();
+  showToast(`${removed.title} retiré des vus`, {
+    label: "Annuler",
+    onClick: () => {
+      const restored = [...myWatched()];
+      if (!restored.some(movie => movie.id === removed.id)) restored.splice(Math.min(removedIndex, restored.length), 0, removed);
+      saveWatchedToCloud(currentUser, restored).catch(() => showToast("Erreur d'enregistrement"));
+      renderWatchedList();
+    }
+  });
 }
 
 function addToWatchlist(movie) {
@@ -2587,16 +2666,41 @@ function addToWatchlist(movie) {
 }
 
 function removeFromWatchlist(movieId) {
-  const updated = myWatchlist().filter(m => m.id !== movieId);
+  const previous = [...myWatchlist()];
+  const removedIndex = previous.findIndex(m => m.id === movieId);
+  const removed = previous[removedIndex];
+  const updated = previous.filter(m => m.id !== movieId);
+  if (!removed) return;
   saveWatchlistToCloud(currentUser, updated).catch(() => showToast("Erreur d'enregistrement"));
   renderWatchlist();
+  showToast(`${removed.title} retiré de À voir`, {
+    label: "Annuler",
+    onClick: () => {
+      const restored = [...myWatchlist()];
+      if (!restored.some(movie => movie.id === removed.id)) restored.splice(Math.min(removedIndex, restored.length), 0, removed);
+      saveWatchlistToCloud(currentUser, restored).catch(() => showToast("Erreur d'enregistrement"));
+      renderWatchlist();
+    }
+  });
 }
 
 function removeFromTop(movieId) {
-  const updated = myRanked().filter(m => m.id !== movieId);
+  const previous = [...myRanked()];
+  const removedIndex = previous.findIndex(m => m.id === movieId);
+  const removed = previous[removedIndex];
+  const updated = previous.filter(m => m.id !== movieId);
+  if (!removed) return;
   saveRankingToCloud(currentUser, updated).catch(() => showToast("Erreur d'enregistrement"));
   renderRanked();
-  showToast("Retiré du Top");
+  showToast(`${removed.title} retiré du Top`, {
+    label: "Annuler",
+    onClick: () => {
+      const restored = [...myRanked()];
+      if (!restored.some(movie => movie.id === removed.id)) restored.splice(Math.min(removedIndex, restored.length), 0, removed);
+      saveRankingToCloud(currentUser, restored).catch(() => showToast("Erreur d'enregistrement"));
+      renderRanked();
+    }
+  });
 }
 
 async function loadMovieActionDetails(movie) {
@@ -2681,6 +2785,21 @@ function closeMovieActionSheet() {
   pendingActionMovie = null;
   pendingActionOrigin = null;
   pendingActionIndex = null;
+}
+
+function closeOverlayElement(overlay) {
+  if (!overlay) return;
+  const closers = {
+    "context-overlay": closeContextMenu,
+    "recommend-overlay": closeRecommendSheet,
+    "movie-action-overlay": closeMovieActionSheet,
+    "install-overlay": closeInstallSheet,
+    "settings-overlay": closeSettingsSheet,
+    "cinema-challenges-overlay": closeChallengesSheet,
+    "badge-movies-overlay": closeBadgeMoviesSheet,
+    "rating-overlay": closeRatingSheet
+  };
+  (closers[overlay.id] || (() => overlay.classList.remove("show")))();
 }
 
 function handleMovieAction(action) {
@@ -4237,6 +4356,15 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target.id === "rating-overlay") closeRatingSheet();
   });
   document.getElementById("btn-cancel-rating").addEventListener("click", closeRatingSheet);
+  document.querySelectorAll(".context-handle").forEach(handle => {
+    handle.addEventListener("click", () => closeOverlayElement(handle.closest(".context-overlay")));
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    const openOverlays = [...document.querySelectorAll(".context-overlay.show")];
+    const topOverlay = openOverlays[openOverlays.length - 1];
+    if (topOverlay) closeOverlayElement(topOverlay);
+  });
   document.querySelectorAll(".context-item").forEach(item => {
     item.addEventListener("click", () => {
       if (activeContextIndex === null) return;
@@ -4419,14 +4547,14 @@ body.no-page-scroll #root {
 }
 
 /* ═══════════════ ONBOARDING ═══════════════ */
-.onboard-screen { min-height: 100vh; padding: 60px 24px 24px; }
+.onboard-screen { width: 100%; max-width: 540px; min-height: 100vh; margin: 0 auto; padding: 60px 24px 24px; }
 .onboard-screen .profile-logo-img { display: block; margin: 0 auto 20px; }
 .onboard-step { font-size: 11px; font-weight: 700; color: var(--lav-deep); letter-spacing: 1.5px; margin-bottom: 8px; }
 .onboard-title { font-weight: 800; font-size: 26px; margin-bottom: 10px; }
 .onboard-text { font-size: 14px; color: var(--ink-soft); font-weight: 500; line-height: 1.6; }
 .onboard-text strong { color: var(--ink); }
 .gate-screen {
-  min-height: 100vh; padding: 58px 24px calc(env(safe-area-inset-bottom, 24px) + 24px);
+  width: 100%; max-width: 540px; min-height: 100vh; margin: 0 auto; padding: 58px 24px calc(env(safe-area-inset-bottom, 24px) + 24px);
   display: flex; flex-direction: column; justify-content: center;
 }
 .gate-screen .profile-logo-img { display: block; margin: 0 auto 22px; }
@@ -4466,6 +4594,7 @@ body.no-page-scroll #root {
 .reco-banner-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
 .reco-banner-action {
   border: none; border-radius: 999px; padding: 7px 10px;
+  min-height: 40px;
   background: rgba(255,255,255,0.62); color: var(--ink);
   font-family: 'Plus Jakarta Sans', sans-serif; font-size: 11px; font-weight: 800;
   box-shadow: 2px 2px 6px rgba(122,90,31,0.14), -2px -2px 6px rgba(255,255,255,0.34);
@@ -4480,7 +4609,7 @@ body.no-page-scroll #root {
   padding: 5px 0 7px; cursor: pointer;
 }
 .rank-recommend-btn {
-  width: 34px; height: 34px; border-radius: 50%; border: none; background: var(--bg);
+  width: 44px; height: 44px; border-radius: 50%; border: none; background: var(--bg);
   box-shadow: 3px 3px 6px var(--shadow-d), -3px -3px 6px var(--shadow-l);
   color: var(--lav-deep); display: grid; place-items: center; cursor: pointer; transition: transform 0.12s;
 }
@@ -4493,8 +4622,8 @@ body.no-page-scroll #root {
   background: rgba(246,244,252,0.88);
   backdrop-filter: blur(16px) saturate(1.4);
 }
-.header-row { display:flex; align-items:center; justify-content:space-between; padding-top: 8px; }
-.brand-title { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 26px; letter-spacing: -0.5px; }
+.header-row { display:flex; align-items:center; justify-content:space-between; width: 100%; max-width: 1180px; margin: 0 auto; padding-top: 8px; }
+.brand-title { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 26px; letter-spacing: 0; }
 .brand-logo {
   width: 38px; height: 38px; border-radius: 12px; object-fit: cover; flex-shrink: 0;
   background: rgba(255,255,255,0.78);
@@ -4504,7 +4633,7 @@ body.no-page-scroll #root {
 .brand-sub { font-size: 11px; color: var(--ink-soft); font-weight: 600; margin-top: -2px; }
 .header-btns { display: flex; gap: 8px; }
 .icon-pill {
-  width: 38px; height: 38px; border-radius: 50%; background: var(--bg); border: none;
+  width: 44px; height: 44px; border-radius: 50%; background: var(--bg); border: none;
   box-shadow: 4px 4px 8px var(--shadow-d), -4px -4px 8px var(--shadow-l);
   display: flex; align-items: center; justify-content: center; font-size: 15px;
   transition: all 0.15s cubic-bezier(.2,.8,.2,1); cursor: pointer;
@@ -4516,7 +4645,7 @@ body.no-page-scroll #root {
   transform: scale(0.94);
 }
 
-.tab-content { padding-bottom: 24px; animation: tab-content-in 0.22s ease; }
+.tab-content { width: 100%; max-width: 1180px; margin: 0 auto; padding-bottom: 24px; animation: tab-content-in 0.22s ease; }
 @keyframes tab-content-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 
 .app-tabbar-wrap {
@@ -4588,7 +4717,7 @@ body.no-page-scroll #root {
 @keyframes tab-users-slide { 0% { transform: translateX(3px); opacity: .45; } 100% { transform: translateX(0); opacity: 1; } }
 
 .profile-switcher { display: flex; gap: 8px; margin-top: 14px; }
-.profile-switcher-tab { margin: 14px 20px 6px; overflow-x: auto; padding-bottom: 4px; }
+.profile-switcher-tab { width: calc(100% - 40px); max-width: 980px; margin: 14px auto 6px; overflow-x: auto; padding-bottom: 4px; }
 .profile-chip {
   display: flex; align-items: center; gap: 6px;
   background: var(--card); border-radius: 18px; padding: 6px 12px 6px 6px;
@@ -4604,7 +4733,7 @@ body.no-page-scroll #root {
 }
 .friend-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 12px; padding: 0 20px 2px;
+  width: calc(100% - 40px); max-width: 980px; gap: 12px; margin: 0 auto; padding: 0 0 2px;
 }
 .friend-card {
   border: none; background: var(--card); border-radius: 20px; min-height: 76px; padding: 12px;
@@ -4620,7 +4749,7 @@ body.no-page-scroll #root {
 .friend-card strong { font-size: 14px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .friend-card small { font-size: 11px; color: var(--ink-soft); font-weight: 700; line-height: 1.25; }
 
-.search-wrap { padding: 16px 0 4px; }
+.search-wrap { width: calc(100% - 40px); max-width: 980px; margin: 0 auto; padding: 16px 0 4px; }
 .search-box {
   background: var(--bg); border-radius: 20px; padding: 14px 18px;
   display: flex; align-items: center; gap: 10px;
@@ -4629,13 +4758,21 @@ body.no-page-scroll #root {
 }
 .search-box.focused { box-shadow: inset 4px 4px 8px var(--shadow-d), inset -4px -4px 8px var(--shadow-l), 0 0 0 3px rgba(201,184,255,0.4); }
 .search-box input { border: none; background: transparent; outline: none; flex: 1; font-family: 'Plus Jakarta Sans', sans-serif; font-size: 16px; font-weight: 500; color: var(--ink); }
+.search-box input::-webkit-search-cancel-button { display: none; }
 .search-box input::placeholder { color: var(--ink-faint); font-weight: 500; }
 .search-icon { width: 19px; height: 19px; color: var(--lav-deep); opacity: 0.45; display: grid; place-items: center; flex-shrink: 0; }
 .search-icon .tab-svg { width: 19px; height: 19px; }
+.search-clear {
+  width: 36px; height: 36px; margin: -7px -10px -7px 0; border: none; border-radius: 50%;
+  display: grid; place-items: center; background: rgba(226,220,241,.7); color: var(--ink-soft);
+}
+.search-clear[hidden] { display: none; }
+.search-clear .tab-svg { width: 17px; height: 17px; }
+.search-clear:active { transform: scale(.9); }
 
 .quick-home-grid {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px; padding: 12px 20px 2px;
+  width: calc(100% - 40px); max-width: 980px; gap: 12px; margin: 0 auto; padding: 12px 0 2px;
 }
 .quick-home-card {
   border: none; background: var(--card); border-radius: 18px; padding: 14px;
@@ -4657,7 +4794,7 @@ body.no-page-scroll #root {
 .quick-home-card strong { font-size: 14px; font-weight: 800; line-height: 1.1; }
 .quick-home-card small { color: var(--ink-soft); font-size: 10px; font-weight: 700; line-height: 1.15; }
 
-.cinema-challenge-section { margin: 24px 20px 4px; }
+.cinema-challenge-section { width: calc(100% - 40px); max-width: 980px; margin: 24px auto 4px; }
 .cinema-challenge-heading {
   display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; margin-bottom: 10px;
 }
@@ -4807,14 +4944,14 @@ body.no-page-scroll #root {
 .cinema-challenge-tile-copy .cinema-challenge-progress { margin-top: 7px; height: 5px; }
 .cinema-challenge-tile-copy small { display: block; color: var(--lav-deep); font-size: 9.5px; font-weight: 800; margin-top: 4px; }
 
-.badges-tab-hero { padding: 18px 20px 2px; }
+.badges-tab-hero { width: calc(100% - 40px); max-width: 980px; margin: 0 auto; padding: 18px 0 2px; }
 .badges-tab-hero > span {
   display: block; color: var(--lav-deep); font-family: 'DM Mono', monospace;
   font-size: 9px; font-weight: 700; letter-spacing: .5px;
 }
 .badges-tab-hero > strong { display: block; margin-top: 5px; font-size: 22px; font-weight: 800; line-height: 1.15; }
 .badges-tab-hero > p { margin-top: 5px; color: var(--ink-soft); font-size: 11px; font-weight: 650; line-height: 1.4; }
-.badges-tab-collection { margin: 24px 20px 112px; }
+.badges-tab-collection { width: calc(100% - 40px); max-width: 980px; margin: 24px auto 112px; }
 .badges-tab-heading { margin-bottom: 12px; }
 .badges-tab-heading strong { display: block; font-size: 16px; font-weight: 800; }
 .badges-tab-heading span { display: block; margin-top: 3px; color: var(--ink-soft); font-size: 10.5px; font-weight: 700; }
@@ -4824,7 +4961,7 @@ body.no-page-scroll #root {
   box-shadow: inset 2px 2px 5px rgba(167,156,201,.18), inset -2px -2px 5px rgba(255,255,255,.78);
 }
 .badge-filter-btn {
-  min-width: 0; min-height: 40px; border: none; border-radius: 11px; padding: 0 4px;
+  min-width: 0; min-height: 44px; border: none; border-radius: 11px; padding: 0 4px;
   background: transparent; color: var(--ink-soft); font-family: 'Plus Jakarta Sans', sans-serif;
   font-size: 10px; font-weight: 800; white-space: nowrap;
 }
@@ -4903,9 +5040,10 @@ body.no-page-scroll #root {
   .cinema-challenge-cta { grid-column: 1 / -1; width: 100%; }
 }
 
-.search-results { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 16px 20px; }
+.search-results { width: calc(100% - 40px); max-width: 980px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0 auto; padding: 16px 0; }
 .poster-pick {
-  position: relative; border-radius: 16px; overflow: hidden; cursor: pointer; background: var(--card);
+  position: relative; min-width: 0; border: none; border-radius: 16px; overflow: hidden; cursor: pointer; background: var(--card);
+  padding: 0; color: var(--ink); text-align: left; font-family: 'Plus Jakarta Sans', sans-serif;
   box-shadow: 5px 5px 12px var(--shadow-d), -5px -5px 12px var(--shadow-l);
   transition: transform 0.15s cubic-bezier(.34,1.56,.64,1);
   animation: pop-in 0.3s cubic-bezier(.34,1.56,.64,1) backwards;
@@ -4917,6 +5055,10 @@ body.no-page-scroll #root {
 .poster-pick:active { transform: scale(0.93); }
 .poster-pick-media { position: relative; }
 .poster-pick img { width:100%; aspect-ratio:2/3; object-fit:cover; display:block; }
+.poster-placeholder {
+  aspect-ratio: 2/3; display: flex; align-items: center; justify-content: center;
+  background: #E8E4F5; color: var(--ink-faint); font-size: 10px; font-weight: 700; text-align: center;
+}
 .search-movie-state {
   position: absolute; left: 7px; right: 7px; bottom: 7px; padding: 5px 6px;
   border-radius: 8px; color: #fff; background: rgba(45,42,61,.84); backdrop-filter: blur(6px);
@@ -4927,8 +5069,20 @@ body.no-page-scroll #root {
 .search-movie-state.watchlist { background: rgba(75,130,189,.92); }
 .poster-pick-title { font-size: 11px; font-weight: 600; padding: 8px 9px 9px; line-height: 1.25; color: var(--ink); }
 .poster-pick.added { opacity: 0.3; pointer-events: none; }
+.search-feedback {
+  width: calc(100% - 40px); max-width: 980px; margin: 14px auto 0; padding: 28px 20px;
+  border-radius: 18px; background: var(--card); color: var(--ink-soft); text-align: center;
+  box-shadow: inset 3px 3px 8px var(--shadow-d), inset -3px -3px 8px var(--shadow-l);
+}
+.search-feedback-icon {
+  width: 42px; height: 42px; margin: 0 auto 10px; border-radius: 14px; display: grid; place-items: center;
+  color: var(--lav-deep); background: var(--bg);
+}
+.search-feedback-icon .tab-svg { width: 22px; height: 22px; }
+.search-feedback strong { display: block; color: var(--ink); font-size: 13px; font-weight: 800; }
+.search-feedback p { margin-top: 4px; font-size: 10.5px; font-weight: 700; line-height: 1.45; }
 
-.skeleton-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; padding: 16px 20px; }
+.skeleton-grid { width: calc(100% - 40px); max-width: 980px; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin: 0 auto; padding: 16px 0; }
 .skeleton-card {
   border-radius: 16px; aspect-ratio: 2/3.4; background: #E8E4F5;
   background-image: linear-gradient(90deg, rgba(255,255,255,0) 0, rgba(255,255,255,0.7) 50%, rgba(255,255,255,0) 100%);
@@ -4939,7 +5093,7 @@ body.no-page-scroll #root {
 
 .section-label { font-size: 12px; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.5px; padding: 22px 20px 10px; }
 
-.rank-list { padding: 0 20px; display: flex; flex-direction: column; gap: 12px; }
+.rank-list { width: calc(100% - 40px); max-width: 880px; margin: 0 auto; padding: 0; display: flex; flex-direction: column; gap: 12px; }
 .rank-card {
   display: grid; grid-template-columns: 56px 64px 1fr auto; align-items: center; gap: 14px;
   background: var(--card); border-radius: 20px; padding: 10px 14px 10px 4px;
@@ -4989,8 +5143,9 @@ body.no-page-scroll #root {
   text-align: center; padding: 50px 24px; font-size: 13px; color: var(--ink-faint); font-weight: 600;
   background: var(--card); border-radius: 20px;
   box-shadow: inset 3px 3px 8px var(--shadow-d), inset -3px -3px 8px var(--shadow-l);
-  margin: 0 20px;
+  width: calc(100% - 40px); max-width: 880px; margin: 0 auto;
 }
+.rank-list > .empty-state, .watched-list > .empty-state, .watchlist-list > .empty-state { width: 100%; margin: 0; }
 .empty-state-icon {
   width: 48px; height: 48px; margin: 0 auto 12px; display: grid; place-items: center;
   border-radius: 16px; color: var(--lav-deep); background: var(--bg);
@@ -5008,7 +5163,16 @@ body.no-page-scroll #root {
   background: var(--bg); box-shadow: 3px 3px 8px var(--shadow-d), -3px -3px 8px var(--shadow-l);
 }
 
-.accordion-section { margin: 18px 20px 0; }
+.collection-intro {
+  width: calc(100% - 40px); max-width: 880px; margin: 0 auto; padding: 22px 0 14px;
+}
+.collection-intro > span {
+  display: block; color: var(--lav-deep); font-family: 'DM Mono', monospace; font-size: 9px; font-weight: 700;
+}
+.collection-intro h1 { margin-top: 4px; font-size: 24px; font-weight: 800; line-height: 1.12; }
+.collection-intro p { margin-top: 4px; color: var(--ink-soft); font-size: 11px; font-weight: 700; line-height: 1.4; }
+
+.accordion-section { width: calc(100% - 40px); max-width: 980px; margin: 18px auto 0; }
 .accordion-header {
   background: var(--card); border-radius: 18px; padding: 16px 18px;
   width: 100%; border: 0; color: var(--ink); text-align: left; font-family: 'Plus Jakarta Sans', sans-serif;
@@ -5049,7 +5213,7 @@ body.no-page-scroll #root {
 .reco-item-meta { font-family: 'DM Mono', monospace; font-size: 9px; color: var(--ink-soft); margin-top: 3px; }
 .reco-item-reason { font-size: 9.5px; color: rgba(154,147,184,0.92); line-height: 1.25; font-weight: 700; margin-top: 4px; min-height: 22px; }
 .reco-dismiss-btn {
-  position: absolute; top: 7px; right: 7px; width: 30px; height: 30px; border: none; border-radius: 50%;
+  position: absolute; top: 7px; right: 7px; width: 40px; height: 40px; border: none; border-radius: 50%;
   padding: 0; background: rgba(255,255,255,0.9); color: var(--ink-soft);
   display: inline-flex; align-items: center; justify-content: center;
   box-shadow: 3px 3px 8px rgba(45,42,61,0.16), -2px -2px 8px rgba(255,255,255,0.68);
@@ -5076,7 +5240,7 @@ body.no-page-scroll #root {
   display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 800;
 }
 
-.watched-list, .watchlist-list { padding: 0 20px; display: flex; flex-direction: column; gap: 12px; }
+.watched-list, .watchlist-list { width: calc(100% - 40px); max-width: 880px; margin: 0 auto; padding: 0; display: flex; flex-direction: column; gap: 12px; }
 .shelf-row {
   display: grid; grid-template-columns: 54px 1fr auto; align-items: center; gap: 12px;
   background: var(--card); border-radius: 20px; padding: 10px 12px 10px 10px;
@@ -5089,7 +5253,7 @@ body.no-page-scroll #root {
 .shelf-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .shelf-btn {
   border: none; border-radius: 10px; background: var(--bg); color: var(--lav-deep);
-  min-height: 30px; padding: 5px 8px; display: inline-flex; align-items: center; gap: 4px;
+  min-height: 40px; padding: 7px 10px; display: inline-flex; align-items: center; gap: 5px;
   font-size: 9.5px; font-weight: 800; font-family: 'Plus Jakarta Sans', sans-serif;
   box-shadow: 2px 2px 5px var(--shadow-d), -2px -2px 5px var(--shadow-l);
 }
@@ -5116,7 +5280,15 @@ body.no-page-scroll #root {
 @keyframes fade-in { from{opacity:0} to{opacity:1} }
 .context-sheet { background: rgba(255,255,255,0.92); backdrop-filter: blur(20px); width: 100%; max-width: 480px; max-height: min(88vh, 760px); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; border-radius: 24px 24px 0 0; padding: 10px 14px calc(env(safe-area-inset-bottom, 16px) + 14px); animation: sheet-up 0.25s cubic-bezier(.2,.8,.2,1); }
 @keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
-.context-handle { width: 36px; height: 4px; background: var(--ink-faint); border-radius: 4px; margin: 6px auto 14px; }
+.context-handle {
+  position: relative; width: 54px; height: 30px; display: block; margin: 0 auto 2px;
+  border: none; border-radius: 15px; background: transparent;
+}
+.context-handle::after {
+  content: ""; position: absolute; left: 50%; top: 9px; width: 36px; height: 4px;
+  transform: translateX(-50%); border-radius: 4px; background: var(--ink-faint);
+}
+.context-handle:active::after { background: var(--lav-deep); transform: translateX(-50%) scaleX(.82); }
 .context-preview { display: flex; align-items: center; gap: 12px; padding: 6px 10px 16px; }
 .context-preview img { width: 48px; aspect-ratio: 2/3; object-fit: cover; border-radius: 8px; }
 .context-preview-title { font-weight: 700; font-size: 15px; }
@@ -5222,12 +5394,22 @@ body.no-page-scroll #root {
 .confetti-piece { position: fixed; width: 7px; height: 7px; top: 50%; left: 50%; border-radius: 2px; pointer-events: none; z-index: 600; }
 
 .toast {
-  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px) scale(0.9);
-  background: var(--ink); color: white; padding: 13px 22px; border-radius: 16px; font-size: 13px; font-weight: 600;
+  position: fixed; bottom: calc(env(safe-area-inset-bottom, 0px) + 24px); left: 50%;
+  width: max-content; max-width: calc(100% - 32px); transform: translateX(-50%) translateY(20px) scale(0.9);
+  background: var(--ink); color: white; padding: 13px 18px; border-radius: 16px; font-size: 13px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; gap: 14px;
   opacity: 0; transition: all 0.3s cubic-bezier(.34,1.56,.64,1); z-index: 2000; pointer-events: none;
   box-shadow: 0 10px 30px rgba(45,42,61,0.3);
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+.toast.has-action.show { pointer-events: auto; }
+.toast span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toast button {
+  flex: 0 0 auto; min-height: 34px; border: none; border-radius: 10px; padding: 0 11px;
+  background: rgba(255,255,255,.14); color: #d8caff; font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 12px; font-weight: 800;
+}
+body:has(.app-tabbar-wrap) .toast { bottom: calc(env(safe-area-inset-bottom, 0px) + 112px); }
 
 .modal-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(45,42,61,0.4); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; padding: 20px; }
 .modal { background: var(--card); border-radius: 28px; padding: 30px; max-width: 420px; width: 100%; box-shadow: 10px 10px 30px var(--shadow-d), -10px -10px 30px var(--shadow-l); }
@@ -5241,6 +5423,27 @@ body.no-page-scroll #root {
 .modal-error { color: #d64668; font-size: 12px; margin-bottom: 12px; font-weight: 600; display: none; }
 .btn-primary { width: 100%; background: var(--lav); color: white; border: none; padding: 15px; border-radius: 16px; font-weight: 700; font-size: 15px; cursor: pointer; transition: transform 0.12s; font-family: 'Plus Jakarta Sans', sans-serif; }
 .btn-primary:active { transform: scale(0.96); }
+
+:where(button, input, [tabindex]):focus-visible {
+  outline: 3px solid rgba(111,78,187,.38);
+  outline-offset: 3px;
+}
+
+@media (min-width: 700px) {
+  .quick-home-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .search-results, .skeleton-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .context-sheet { margin-bottom: 12px; border-radius: 24px; }
+  .collection-intro { padding-top: 30px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
 
 .loading-spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--ink-faint); border-top-color: var(--lav); border-radius: 50%; animation: spin 0.6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -5261,9 +5464,9 @@ body.no-page-scroll #root {
 <body>
 <div id="root"></div>
 
-<div class="context-overlay" id="context-overlay">
-  <div class="context-sheet" id="context-sheet">
-    <div class="context-handle"></div>
+<div class="context-overlay" id="context-overlay" aria-hidden="true">
+  <div class="context-sheet" id="context-sheet" role="dialog" aria-modal="true" aria-label="Modifier le classement">
+    <button class="context-handle" type="button" aria-label="Fermer"></button>
     <div class="context-preview" id="context-preview"></div>
     <div class="context-item" data-action="top"><span class="ic">🏆</span> Mettre en N°1</div>
     <div class="context-item" data-action="up"><span class="ic">⬆️</span> Monter d'une place</div>
@@ -5273,26 +5476,26 @@ body.no-page-scroll #root {
   </div>
 </div>
 
-<div class="context-overlay" id="recommend-overlay">
-  <div class="context-sheet">
-    <div class="context-handle"></div>
+<div class="context-overlay" id="recommend-overlay" aria-hidden="true">
+  <div class="context-sheet" role="dialog" aria-modal="true" aria-label="Recommander le film">
+    <button class="context-handle" type="button" aria-label="Fermer"></button>
     <div class="context-preview" id="recommend-preview"></div>
     <div id="recommend-targets"></div>
   </div>
 </div>
 
-<div class="context-overlay" id="movie-action-overlay">
-  <div class="context-sheet">
-    <div class="context-handle"></div>
+<div class="context-overlay" id="movie-action-overlay" aria-hidden="true">
+  <div class="context-sheet" role="dialog" aria-modal="true" aria-label="Actions du film">
+    <button class="context-handle" type="button" aria-label="Fermer"></button>
     <div class="context-preview" id="movie-action-preview"></div>
     <div id="movie-action-items"></div>
   </div>
 </div>
 
-<div class="context-overlay" id="install-overlay">
-  <div class="context-sheet">
-    <div class="context-handle"></div>
-    <img class="install-logo" src="./letop-icon-192.png?v=20260705-ux-polish-v6" alt="Le Top">
+<div class="context-overlay" id="install-overlay" aria-hidden="true">
+  <div class="context-sheet" role="dialog" aria-modal="true" aria-labelledby="install-title">
+    <button class="context-handle" type="button" aria-label="Fermer"></button>
+    <img class="install-logo" src="./letop-icon-192.png?v=20260705-premium-ux-v7" alt="Le Top">
     <div class="install-title" id="install-title">Installer Le Top</div>
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
@@ -5301,18 +5504,18 @@ body.no-page-scroll #root {
   </div>
 </div>
 
-<div class="context-overlay" id="settings-overlay">
-  <div class="context-sheet settings-sheet">
-    <div class="context-handle"></div>
+<div class="context-overlay" id="settings-overlay" aria-hidden="true">
+  <div class="context-sheet settings-sheet" role="dialog" aria-modal="true" aria-label="Réglages">
+    <button class="context-handle" type="button" aria-label="Fermer"></button>
     <div class="install-title">Réglages</div>
     <div id="settings-content"></div>
     <button class="btn-secondary" id="btn-close-settings">Fermer</button>
   </div>
 </div>
 
-<div class="context-overlay" id="cinema-challenges-overlay">
-  <div class="context-sheet cinema-challenges-sheet">
-    <div class="context-handle"></div>
+<div class="context-overlay" id="cinema-challenges-overlay" aria-hidden="true">
+  <div class="context-sheet cinema-challenges-sheet" role="dialog" aria-modal="true" aria-label="Défis cinéma">
+    <button class="context-handle" type="button" aria-label="Fermer"></button>
     <div class="cinema-challenges-sheet-heading">
       <div>
         <div class="install-title">Défis cinéma</div>
@@ -5324,9 +5527,9 @@ body.no-page-scroll #root {
   </div>
 </div>
 
-<div class="context-overlay" id="badge-movies-overlay">
-  <div class="context-sheet badge-movies-sheet">
-    <div class="context-handle"></div>
+<div class="context-overlay" id="badge-movies-overlay" aria-hidden="true">
+  <div class="context-sheet badge-movies-sheet" role="dialog" aria-modal="true" aria-label="Films associés au badge">
+    <button class="context-handle" type="button" aria-label="Fermer"></button>
     <div id="badge-movies-header"></div>
     <div class="badge-movies-section-title">Films associés</div>
     <div id="badge-movies-list"></div>
@@ -5334,9 +5537,9 @@ body.no-page-scroll #root {
   </div>
 </div>
 
-<div class="context-overlay" id="rating-overlay">
-  <div class="context-sheet">
-    <div class="context-handle"></div>
+<div class="context-overlay" id="rating-overlay" aria-hidden="true">
+  <div class="context-sheet" role="dialog" aria-modal="true" aria-label="Noter le film">
+    <button class="context-handle" type="button" aria-label="Fermer"></button>
     <div class="context-preview" id="rating-preview"></div>
     <div class="rating-options" id="rating-options"></div>
     <button class="btn-secondary" id="btn-cancel-rating">Annuler</button>
