@@ -9,9 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Le Top 🍿</title>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260705-saga-badges-v1">
-<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260705-saga-badges-v1">
-<link rel="manifest" href="./site.webmanifest?v=20260705-saga-badges-v1">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260705-badges-tab-v2">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260705-badges-tab-v2">
+<link rel="manifest" href="./site.webmanifest?v=20260705-badges-tab-v2">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -39,7 +39,7 @@ const TMDB_IMG = "https://image.tmdb.org/t/p/w342";
 const TMDB_BACKDROP = "https://image.tmdb.org/t/p/w500";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260705-saga-badges-v1";
+const PWA_VERSION = "20260705-badges-tab-v2";
 const APP_PUBLIC_URL = "https://kevtrs.github.io/Top/";
 
 const APP_TABS = [
@@ -47,6 +47,7 @@ const APP_TABS = [
   { id: "top", label: "Top", icon: "crown", color: "var(--gold)" },
   { id: "watched", label: "Vus", icon: "ticket", color: "var(--mint)" },
   { id: "watchlist", label: "À voir", icon: "popcorn", color: "var(--sky)" },
+  { id: "badges", label: "Badges", icon: "medal", color: "var(--pink)" },
   { id: "friends", label: "Amis", icon: "users", color: "var(--lav)" }
 ];
 
@@ -977,7 +978,7 @@ function challengeBadgeArtHtml(challenge, extraClass = "") {
   if (art === "director") return `<svg ${common}><path class="badge-back" d="M14 29h68v48H14z"/><path class="badge-light" d="M14 19h68v18H14z"/><path class="badge-hot" d="m20 19 12 18m4-18 12 18m4-18 12 18m4-18 12 18"/><path class="badge-light" d="M28 57c9-15 15 11 24-4 5-8 8 10 17 1" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg>`;
   return `<svg ${common}><circle class="badge-back" cx="48" cy="48" r="39"/><circle class="badge-light" cx="48" cy="48" r="25"/><circle class="badge-hot" cx="48" cy="48" r="7"/><circle class="badge-back" cx="48" cy="34" r="5"/><circle class="badge-back" cx="61" cy="48" r="5"/><circle class="badge-back" cx="48" cy="62" r="5"/><circle class="badge-back" cx="35" cy="48" r="5"/></svg>`;
 }
-function renderChallengeSpotlightHtml() {
+function renderChallengeSpotlightHtml(showCollectionButton = true) {
   const active = activeCinemaChallenge();
   if (!active) return "";
   const percent = Math.round(challengeProgress(active) * 100);
@@ -986,7 +987,7 @@ function renderChallengeSpotlightHtml() {
     <section class="cinema-challenge-section">
       <div class="cinema-challenge-heading">
         <div><span>Défis cinéma</span><small>Choisis ce que tu veux débloquer</small></div>
-        <button id="btn-open-challenges" type="button">Collection</button>
+        ${showCollectionButton ? `<button id="btn-open-challenges" type="button">Collection</button>` : ""}
       </div>
       <article class="cinema-challenge-featured" data-challenge-id="${escapeAttr(active.id)}">
         <div class="cinema-challenge-art">${challengeBadgeArtHtml(active)}</div>
@@ -1001,8 +1002,7 @@ function renderChallengeSpotlightHtml() {
       </article>
     </section>`;
 }
-function renderChallengesSheet() {
-  const gallery = document.getElementById("cinema-challenge-gallery");
+function renderChallengesGallery(gallery, closeAfterSelect = false) {
   if (!gallery) return;
   const active = activeCinemaChallenge();
   const catalog = cinemaChallengeCatalog();
@@ -1036,13 +1036,14 @@ function renderChallengesSheet() {
       const chosen = catalog.find(challenge => challenge.id === button.dataset.challengeId);
       if (!chosen || chosen.completed) return;
       setActiveCinemaChallenge(chosen.id);
-      closeChallengesSheet();
-      recoExpanded = true;
+      if (closeAfterSelect) closeChallengesSheet();
       renderPage();
       showToast(`${chosen.name} devient ton objectif`);
-      setTimeout(() => document.getElementById("reco-accordion-header")?.scrollIntoView({ behavior: "smooth", block: "center" }), 80);
     });
   });
+}
+function renderChallengesSheet() {
+  renderChallengesGallery(document.getElementById("cinema-challenge-gallery"), true);
 }
 function openChallengesSheet() {
   renderChallengesSheet();
@@ -1458,6 +1459,13 @@ function tabIconHtml(icon) {
       <path class="tab-popcorn-bucket" d="M20 8c.5 0 .9.4.8 1l-2.6 12c-.1.5-.7 1-1.2 1H7c-.6 0-1.1-.4-1.2-1L3.2 9c-.1-.6.3-1 .8-1Z"></path>
     </svg>`;
   }
+  if (icon === "medal") {
+    return `<svg ${common}>
+      <circle class="tab-medal-disc" cx="12" cy="8" r="6"></circle>
+      <path class="tab-medal-ribbon" d="m8.5 13-1.5 8.4a.5.5 0 0 0 .8.5l3.6-2.7a1 1 0 0 1 1.2 0l3.6 2.7a.5.5 0 0 0 .8-.5L15.5 13"></path>
+      <path class="tab-medal-star" d="m12 5 .9 1.8 2 .3-1.5 1.4.4 2-1.8-1-1.8 1 .4-2-1.5-1.4 2-.3Z"></path>
+    </svg>`;
+  }
   if (icon === "settings") {
     return `<svg ${common}>
       <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"></path>
@@ -1749,8 +1757,6 @@ function renderSearchTabContent(myIncoming) {
       <button class="quick-home-card" data-go-tab="friends" type="button">${surfaceIconHtml("users", "quick-home-icon")}<strong>Amis</strong><small>Leurs tops</small></button>
     </div>
 
-    ${renderChallengeSpotlightHtml()}
-
     <div class="accordion-section">
       <div class="accordion-header" id="reco-accordion-header">
         <div class="accordion-left">
@@ -1802,6 +1808,22 @@ function renderWatchlistTabContent() {
     <div class="watchlist-list" id="watchlist-list"></div>`;
 }
 
+function renderBadgesTabContent() {
+  const catalog = cinemaChallengeCatalog();
+  const unlocked = catalog.filter(challenge => challenge.completed).length;
+  return `
+    <div class="badges-tab-hero">
+      <span>COLLECTION</span>
+      <strong>${unlocked} / ${catalog.length} badges débloqués</strong>
+      <p>Chaque film vu peut te rapprocher d'un nouveau trophée.</p>
+    </div>
+    ${renderChallengeSpotlightHtml(false)}
+    <section class="badges-tab-collection">
+      <div class="badges-tab-heading"><strong>Tous les badges</strong><span>Choisis-en un pour en faire ton objectif</span></div>
+      <div class="cinema-challenge-gallery" id="badges-challenge-gallery"></div>
+    </section>`;
+}
+
 function renderFriendsTabContent(viewed) {
   const friends = friendProfiles();
   if (!friends.length) {
@@ -1837,6 +1859,7 @@ function renderActiveTabContent(viewed, myIncoming) {
   if (activeTab === "search") return renderSearchTabContent(myIncoming);
   if (activeTab === "watched") return renderWatchedTabContent();
   if (activeTab === "watchlist") return renderWatchlistTabContent();
+  if (activeTab === "badges") return renderBadgesTabContent();
   if (activeTab === "friends") return renderFriendsTabContent(viewed);
   return renderTopTabContent();
 }
@@ -1937,6 +1960,9 @@ function renderActiveTabView() {
     renderWatchedList();
   } else if (activeTab === "watchlist") {
     renderWatchlist();
+  } else if (activeTab === "badges") {
+    ensureChallengeMetadata();
+    renderChallengesGallery(document.getElementById("badges-challenge-gallery"));
   } else if (activeTab === "top" || activeTab === "friends") {
     renderRanked();
   }
@@ -2009,9 +2035,19 @@ function attachAppEvents() {
   document.getElementById("btn-open-challenges")?.addEventListener("click", openChallengesSheet);
   document.getElementById("btn-challenge-movies")?.addEventListener("click", () => {
     recoExpanded = true;
-    toggleAccordion("reco", true);
-    updateRecommendations();
-    setTimeout(() => document.getElementById("reco-accordion-header")?.scrollIntoView({ behavior: "smooth", block: "center" }), 60);
+    const showChallengeMovies = () => {
+      toggleAccordion("reco", true);
+      updateRecommendations();
+      document.getElementById("reco-accordion-header")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
+    if (activeTab !== "search") {
+      activeTab = "search";
+      viewingUser = currentUser;
+      renderPage();
+      setTimeout(showChallengeMovies, 80);
+    } else {
+      showChallengeMovies();
+    }
   });
 
   document.getElementById("btn-reset")?.addEventListener("click", () => {
@@ -4260,6 +4296,8 @@ body.no-page-scroll #root {
 .app-tab-item.active[data-tab="top"] .tab-svg { animation: tab-crown-pop 0.7s cubic-bezier(.34,1.56,.64,1); }
 .app-tab-item.active[data-tab="watched"] .tab-svg { animation: tab-ticket-snap 0.7s ease; }
 .app-tab-item.active[data-tab="watchlist"] .tab-popcorn-kernels { animation: tab-popcorn-pop 0.75s ease; }
+.app-tab-item.active[data-tab="badges"] .tab-medal-disc { animation: tab-medal-pop .7s cubic-bezier(.34,1.56,.64,1); transform-origin: 12px 8px; }
+.app-tab-item.active[data-tab="badges"] .tab-medal-ribbon { animation: tab-medal-ribbon .7s ease; transform-origin: 12px 13px; }
 .app-tab-item.active[data-tab="friends"] .tab-users-side { animation: tab-users-slide 0.65s ease; }
 @keyframes tab-search-pulse { 0%,100% { transform: scale(1); } 42% { transform: scale(0.86); } 70% { transform: scale(1.08); } }
 @keyframes tab-search-line { 0%,100% { transform: rotate(0deg); } 45% { transform: rotate(-14deg) translate(-1px, 1px); } }
@@ -4267,6 +4305,8 @@ body.no-page-scroll #root {
 @keyframes tab-ticket-snap { 0%,100% { transform: rotate(0); } 30% { transform: rotate(-8deg) translateY(-1px); } 60% { transform: rotate(5deg); } }
 @keyframes tab-hand-wave { 0%,100% { transform: rotate(0deg); } 25% { transform: rotate(15deg); } 55% { transform: rotate(-9deg); } 78% { transform: rotate(7deg); } }
 @keyframes tab-popcorn-pop { 0%,100% { transform: translateY(0); } 35% { transform: translateY(-3px); } 62% { transform: translateY(1px); } }
+@keyframes tab-medal-pop { 0% { transform: scale(.72) rotate(-12deg); } 55% { transform: scale(1.12) rotate(5deg); } 100% { transform: scale(1) rotate(0); } }
+@keyframes tab-medal-ribbon { 0% { transform: translateY(-3px); opacity: .35; } 100% { transform: translateY(0); opacity: 1; } }
 @keyframes tab-users-slide { 0% { transform: translateX(3px); opacity: .45; } 100% { transform: translateX(0); opacity: 1; } }
 
 .profile-switcher { display: flex; gap: 8px; margin-top: 14px; }
@@ -4431,6 +4471,7 @@ body.no-page-scroll #root {
 .cinema-challenges-sheet-heading { padding: 0 2px 12px; }
 .cinema-challenges-sheet-heading .install-title { margin: 0; text-align: left; }
 .cinema-challenges-sheet-heading p { color: var(--ink-soft); font-size: 12px; line-height: 1.45; font-weight: 600; margin-top: 4px; }
+.cinema-challenge-gallery,
 #cinema-challenge-gallery { display: flex; flex-direction: column; gap: 18px; padding: 2px 0 8px; }
 .cinema-challenge-group { display: flex; flex-direction: column; gap: 10px; }
 .cinema-challenge-group-heading { padding: 2px 3px 0; }
@@ -4454,6 +4495,18 @@ body.no-page-scroll #root {
 .cinema-challenge-tile-copy > span { display: block; color: var(--ink-soft); font-size: 10.5px; line-height: 1.3; font-weight: 650; margin-top: 2px; }
 .cinema-challenge-tile-copy .cinema-challenge-progress { margin-top: 7px; height: 5px; }
 .cinema-challenge-tile-copy small { display: block; color: var(--lav-deep); font-size: 9.5px; font-weight: 800; margin-top: 4px; }
+
+.badges-tab-hero { padding: 18px 20px 2px; }
+.badges-tab-hero > span {
+  display: block; color: var(--lav-deep); font-family: 'DM Mono', monospace;
+  font-size: 9px; font-weight: 700; letter-spacing: .5px;
+}
+.badges-tab-hero > strong { display: block; margin-top: 5px; font-size: 22px; font-weight: 800; line-height: 1.15; }
+.badges-tab-hero > p { margin-top: 5px; color: var(--ink-soft); font-size: 11px; font-weight: 650; line-height: 1.4; }
+.badges-tab-collection { margin: 24px 20px 112px; }
+.badges-tab-heading { margin-bottom: 12px; }
+.badges-tab-heading strong { display: block; font-size: 16px; font-weight: 800; }
+.badges-tab-heading span { display: block; margin-top: 3px; color: var(--ink-soft); font-size: 10.5px; font-weight: 700; }
 
 @media (max-width: 390px) {
   .cinema-challenge-featured { grid-template-columns: 72px minmax(0, 1fr); gap: 11px; padding: 12px; }
@@ -4805,7 +4858,7 @@ body.no-page-scroll #root {
 <div class="context-overlay" id="install-overlay">
   <div class="context-sheet">
     <div class="context-handle"></div>
-    <img class="install-logo" src="./letop-icon-192.png?v=20260705-saga-badges-v1" alt="Le Top">
+    <img class="install-logo" src="./letop-icon-192.png?v=20260705-badges-tab-v2" alt="Le Top">
     <div class="install-title" id="install-title">Installer Le Top</div>
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
