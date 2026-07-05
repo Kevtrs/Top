@@ -9,9 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Le Top 🍿</title>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260705-badge-films-v4">
-<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260705-badge-films-v4">
-<link rel="manifest" href="./site.webmanifest?v=20260705-badge-films-v4">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260705-watched-badges-v5">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260705-watched-badges-v5">
+<link rel="manifest" href="./site.webmanifest?v=20260705-watched-badges-v5">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -40,7 +40,7 @@ const TMDB_BACKDROP = "https://image.tmdb.org/t/p/w500";
 const TMDB_PROFILE = "https://image.tmdb.org/t/p/w185";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260705-badge-films-v4";
+const PWA_VERSION = "20260705-watched-badges-v5";
 const APP_PUBLIC_URL = "https://kevtrs.github.io/Top/";
 
 const APP_TABS = [
@@ -384,9 +384,9 @@ async function saveRankingToCloud(userId, rankedArray) {
 }
 async function saveWatchedToCloud(userId, watchedArray) {
   if (!userId) return;
+  allWatched = { ...allWatched, [userId]: watchedArray };
   if (userId === currentUser) await ensureProfileInCloud(userId);
   const profile = profilePayload(userId);
-  allWatched = { ...allWatched, [userId]: watchedArray };
   await setDoc(doc(db, "watched", userId), { movies: watchedArray, updatedAt: Date.now(), ...profileMetaPayload(profile) }, { merge: true });
 }
 async function saveWatchlistToCloud(userId, watchlistArray) {
@@ -2483,16 +2483,46 @@ function closeRatingSheet() {
   pendingRatingRecoDoc = null;
 }
 
-function addToWatched(movie, rating) {
+async function addToWatched(movie, rating) {
   if (!currentUser || !movie) return;
   const list = myWatched();
   const watchedMovie = { ...simplifyMovie(movie), watchedAt: Date.now(), rating };
   const existingIndex = list.findIndex(m => m.id === movie.id);
   const updated = existingIndex >= 0 ? [...list] : [watchedMovie, ...list];
   if (existingIndex >= 0) updated[existingIndex] = { ...updated[existingIndex], ...watchedMovie };
-  saveWatchedToCloud(currentUser, updated).catch(() => showToast("Erreur d'enregistrement"));
-  renderWatchedList();
+  allWatched = { ...allWatched, [currentUser]: updated };
+  if (activeTab === "badges") renderPage();
+  else renderWatchedList();
   showToast(`${movie.title} noté ${rating}/10`);
+  try {
+    await saveWatchedToCloud(currentUser, updated);
+  } catch (e) {
+    showToast("Film noté, synchronisation à réessayer");
+    return;
+  }
+  if (!(watchedMovie.genre_ids || []).length) {
+    try {
+      const details = await getMovieDetails(watchedMovie.id);
+      const director = (details.credits?.crew || []).find(person => person.job === "Director");
+      const enriched = {
+        ...watchedMovie,
+        genre_ids: (details.genres || []).map(genre => Number(genre.id)),
+        keyword_ids: (details.keywords?.keywords || details.keywords?.results || []).map(keyword => Number(keyword.id)).slice(0, 8),
+        original_language: details.original_language || null,
+        director_id: director?.id || null,
+        director_name: director?.name || null,
+        collection_id: details.belongs_to_collection?.id || null,
+        collection_name: details.belongs_to_collection?.name || null,
+        challenge_meta_at: Date.now(),
+        challenge_meta_failed_at: 0
+      };
+      const enrichedList = updated.map(item => Number(item.id) === Number(enriched.id) ? enriched : item);
+      await saveWatchedToCloud(currentUser, enrichedList);
+      if (activeTab === "badges") renderPage();
+    } catch (e) {
+      // ensureChallengeMetadata will retry without losing the rating.
+    }
+  }
 }
 
 function removeFromWatched(movieId) {
@@ -3459,8 +3489,13 @@ async function ensureChallengeMetadata() {
   const watched = myWatched();
   const all = [...ranked, ...watched];
   const missingById = new Map();
+  const metadataRetryDelay = 2 * 60 * 1000;
   all.forEach(movie => {
-    if (!movie?.id || Number(movie.challenge_meta_at) > 0) return;
+    if (!movie?.id) return;
+    const hasGenres = Array.isArray(movie.genre_ids) && movie.genre_ids.length > 0;
+    const hasMetadata = hasGenres && Number(movie.challenge_meta_at) > 0;
+    const failedRecently = Date.now() - Number(movie.challenge_meta_failed_at || 0) < metadataRetryDelay;
+    if (hasMetadata || failedRecently) return;
     missingById.set(Number(movie.id), movie);
   });
   const queue = [...missingById.values()].slice(0, 16);
@@ -3485,10 +3520,11 @@ async function ensureChallengeMetadata() {
           director_name: director?.name || null,
           collection_id: details.belongs_to_collection?.id || null,
           collection_name: details.belongs_to_collection?.name || null,
-          challenge_meta_at: Date.now()
+          challenge_meta_at: Date.now(),
+          challenge_meta_failed_at: 0
         });
       } catch (e) {
-        metadata.set(Number(movie.id), { challenge_meta_at: Date.now() });
+        metadata.set(Number(movie.id), { challenge_meta_failed_at: Date.now() });
       }
     }));
 
@@ -3511,6 +3547,7 @@ async function ensureChallengeMetadata() {
 
     const director = preferredDirectorFromSeen(challengeSeenMovies());
     if (director) await ensureDirectorFilmography(director);
+    if (activeTab === "badges" && (rankedChanged || watchedChanged)) renderPage();
   } catch (e) {
     // Badges keep their basic genre progress when metadata enrichment fails.
   } finally {
@@ -5115,7 +5152,7 @@ body.no-page-scroll #root {
 <div class="context-overlay" id="install-overlay">
   <div class="context-sheet">
     <div class="context-handle"></div>
-    <img class="install-logo" src="./letop-icon-192.png?v=20260705-badge-films-v4" alt="Le Top">
+    <img class="install-logo" src="./letop-icon-192.png?v=20260705-watched-badges-v5" alt="Le Top">
     <div class="install-title" id="install-title">Installer Le Top</div>
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
