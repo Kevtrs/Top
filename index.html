@@ -1820,6 +1820,32 @@ function tabIconHtml(icon) {
       <path d="M14 11v6"></path>
     </svg>`;
   }
+  if (icon === "dice") {
+    return `<svg ${common}>
+      <rect x="3" y="3" width="18" height="18" rx="4"></rect>
+      <path d="M8 8h.01"></path>
+      <path d="M16 8h.01"></path>
+      <path d="M8 16h.01"></path>
+      <path d="M16 16h.01"></path>
+      <path d="M12 12h.01"></path>
+    </svg>`;
+  }
+  if (icon === "refresh") {
+    return `<svg ${common}>
+      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+      <path d="M21 3v5h-5"></path>
+      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+      <path d="M8 16H3v5"></path>
+    </svg>`;
+  }
+  if (icon === "clapperboard") {
+    return `<svg ${common}>
+      <path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3Z"></path>
+      <path d="m6.2 5.3 3.1 3.9"></path>
+      <path d="m12.4 3.4 3.1 4"></path>
+      <path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path>
+    </svg>`;
+  }
   if (icon === "log-out") {
     return `<svg ${common}>
       <path d="M10 17 15 12 10 7"></path>
@@ -2159,7 +2185,7 @@ function renderWatchlistTabContent() {
     ${renderCollectionIntro("LISTE", "À voir", `${count} film${count > 1 ? "s" : ""} gardé${count > 1 ? "s" : ""} pour plus tard`, "watchlist")}
     <div class="tonight-pick-cta-wrap">
       <button class="tonight-pick-cta" id="btn-tonight-pick" type="button">
-        <span class="tonight-pick-cta-icon">🎲</span>
+        ${surfaceIconHtml("dice", "tonight-pick-cta-icon")}
         <span class="tonight-pick-cta-copy"><strong>On regarde quoi ce soir ?</strong><small>Tirage au sort dans ta liste À voir</small></span>
       </button>
     </div>
@@ -4588,13 +4614,17 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("tonight-pick-overlay").addEventListener("click", (e) => {
     if (e.target.id === "tonight-pick-overlay") closeTonightPickSheet();
   });
-  document.getElementById("btn-tonight-pick-watch").addEventListener("click", () => {
+  const btnTonightPickWatch = document.getElementById("btn-tonight-pick-watch");
+  btnTonightPickWatch.insertAdjacentHTML("afterbegin", surfaceIconHtml("clapperboard", "tonight-pick-btn-icon"));
+  btnTonightPickWatch.addEventListener("click", () => {
     const movie = tonightPickMovie;
     if (!movie) return;
     closeTonightPickSheet();
     openRatingSheet(movie, "watchlist");
   });
-  document.getElementById("btn-tonight-pick-reroll").addEventListener("click", rerollTonightPick);
+  const btnTonightPickReroll = document.getElementById("btn-tonight-pick-reroll");
+  btnTonightPickReroll.insertAdjacentHTML("afterbegin", surfaceIconHtml("refresh", "tonight-pick-btn-icon"));
+  btnTonightPickReroll.addEventListener("click", rerollTonightPick);
   document.querySelectorAll(".context-handle").forEach(handle => {
     handle.addEventListener("click", () => closeOverlayElement(handle.closest(".context-overlay")));
   });
@@ -5480,7 +5510,8 @@ body.no-page-scroll #root {
   transition: transform 0.14s cubic-bezier(.2,.8,.2,1);
 }
 .tonight-pick-cta:active { transform: scale(0.97); }
-.tonight-pick-cta-icon { font-size: 26px; line-height: 1; }
+.tonight-pick-cta-icon { flex-shrink: 0; display: flex; }
+.tonight-pick-cta-icon .tab-svg { width: 26px; height: 26px; }
 .tonight-pick-cta-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .tonight-pick-cta-copy strong { font-size: 15px; font-weight: 800; }
 .tonight-pick-cta-copy small { font-size: 11px; font-weight: 650; opacity: 0.9; }
@@ -5497,6 +5528,11 @@ body.no-page-scroll #root {
 #tonight-pick-content h2 { margin-top: 10px; font-size: 20px; font-weight: 800; line-height: 1.2; }
 #tonight-pick-content p { margin-top: 4px; color: var(--ink-soft); font-size: 12px; font-weight: 700; }
 .tonight-pick-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+.tonight-pick-actions .btn-primary, .tonight-pick-actions .btn-secondary {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+}
+.tonight-pick-btn-icon { display: flex; }
+.tonight-pick-btn-icon .tab-svg { width: 18px; height: 18px; }
 
 .watched-list, .watchlist-list { width: calc(100% - 40px); max-width: 880px; margin: 0 auto; padding: 0; display: flex; flex-direction: column; gap: 12px; }
 .shelf-row {
@@ -5853,8 +5889,8 @@ body:has(.app-tabbar-wrap) .toast { bottom: calc(env(safe-area-inset-bottom, 0px
     <button class="context-handle" type="button" aria-label="Fermer"></button>
     <div id="tonight-pick-content"></div>
     <div class="tonight-pick-actions">
-      <button class="btn-primary" id="btn-tonight-pick-watch" type="button">🎬 On regarde ça !</button>
-      <button class="btn-secondary" id="btn-tonight-pick-reroll" type="button">🔀 Un autre film</button>
+      <button class="btn-primary" id="btn-tonight-pick-watch" type="button"><span>On regarde ça !</span></button>
+      <button class="btn-secondary" id="btn-tonight-pick-reroll" type="button"><span>Un autre film</span></button>
     </div>
   </div>
 </div>
