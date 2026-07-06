@@ -5,13 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="theme-color" content="#F6F4FC">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Le Top">
+<meta name="apple-mobile-web-app-title" content="Popcorn">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
-<title>Le Top 🍿</title>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260706-product-loop-v9">
-<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260706-product-loop-v9">
-<link rel="manifest" href="./site.webmanifest?v=20260706-product-loop-v9">
+<title>Popcorn</title>
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260706-popcorn-v10">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260706-popcorn-v10">
+<link rel="manifest" href="./site.webmanifest?v=20260706-popcorn-v10">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -40,7 +40,7 @@ const TMDB_BACKDROP = "https://image.tmdb.org/t/p/w500";
 const TMDB_PROFILE = "https://image.tmdb.org/t/p/w185";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260706-product-loop-v9";
+const PWA_VERSION = "20260706-popcorn-v10";
 const APP_PUBLIC_URL = "https://kevtrs.github.io/Top/";
 
 const APP_TABS = [
@@ -308,7 +308,8 @@ let viewingUser  = currentUser;
 let allRankings  = {};
 let allWatched = {};
 let allWatchlist = {};
-let activeTab = "search";
+const requestedInitialTab = new URLSearchParams(location.search).get("tab");
+let activeTab = APP_TABS.some(tab => tab.id === requestedInitialTab) ? requestedInitialTab : "search";
 const tabScrollPositions = {};
 let badgeGalleryFilter = "progress";
 let recoExpanded = false;
@@ -346,6 +347,7 @@ let toastTimer = null;
 let pendingConfirmAction = null;
 let badgeUnlockQueue = [];
 let activeBadgeUnlockId = null;
+let overlayHistoryProgrammaticBack = false;
 
 const PENDING_PUSH_TOKEN_KEY = "letop_pending_push_token";
 const PUSH_BOUND_KEY = "letop_push_bound";
@@ -364,7 +366,7 @@ window.addEventListener("appinstalled", () => {
   installGateSheetShown = false;
   applyPlatformMode();
   const toast = document.getElementById("toast");
-  if (toast) showToast("Le Top est installé");
+  if (toast) showToast("Popcorn est installé");
   renderPage();
 });
 
@@ -1265,6 +1267,7 @@ function showNextBadgeUnlock() {
     <p>${escapeHtml(challenge.description)}</p>
     <div class="badge-unlock-reward">${surfaceIconHtml("check", "badge-unlock-check")}<span>Ajouté à ta collection</span></div>`;
   overlay.classList.add("show");
+  platformTapFeedback([18, 35, 24]);
   scheduleScrollLockUpdate();
   requestAnimationFrame(() => {
     const art = overlay.querySelector(".badge-unlock-art");
@@ -1457,6 +1460,38 @@ function applyPlatformMode() {
   document.documentElement.classList.toggle("is-desktop", platform === "desktop");
   document.documentElement.classList.toggle("is-standalone", isStandaloneApp());
 }
+function platformTapFeedback(pattern = 8) {
+  if (!isAndroidDevice() || !("vibrate" in navigator)) return;
+  try { navigator.vibrate(pattern); } catch (e) {}
+}
+function setupPlatformOverlayHistory() {
+  const overlays = [...document.querySelectorAll(".context-overlay")];
+  if (!overlays.length) return;
+  const observer = new MutationObserver(mutations => {
+    if (!isAndroidDevice() || !isStandaloneApp()) return;
+    mutations.forEach(mutation => {
+      const overlay = mutation.target;
+      const stateOverlay = history.state?.popcornOverlay;
+      if (overlay.classList.contains("show") && stateOverlay !== overlay.id) {
+        history.pushState({ ...(history.state || {}), popcornOverlay: overlay.id }, "");
+      } else if (!overlay.classList.contains("show") && stateOverlay === overlay.id && !overlayHistoryProgrammaticBack) {
+        overlayHistoryProgrammaticBack = true;
+        history.back();
+      }
+    });
+  });
+  overlays.forEach(overlay => observer.observe(overlay, { attributes: true, attributeFilter: ["class"] }));
+  window.addEventListener("popstate", () => {
+    if (overlayHistoryProgrammaticBack) {
+      overlayHistoryProgrammaticBack = false;
+      return;
+    }
+    if (!isAndroidDevice() || !isStandaloneApp()) return;
+    const openOverlays = [...document.querySelectorAll(".context-overlay.show")];
+    const topOverlay = openOverlays[openOverlays.length - 1];
+    if (topOverlay) closeOverlayElement(topOverlay);
+  });
+}
 function installButtonLabel() {
   if (isIosDevice()) return "Ajouter à l'écran d'accueil";
   if (isAndroidDevice()) return "Installer l'app";
@@ -1556,8 +1591,8 @@ async function shareAppLink() {
   }
   try {
     await navigator.share({
-      title: "Le Top",
-      text: "Installe Le Top sur ton écran d'accueil",
+      title: "Popcorn",
+      text: "Installe Popcorn sur ton écran d'accueil",
       url: APP_PUBLIC_URL
     });
   } catch (e) {
@@ -1587,7 +1622,7 @@ function renderInstallGate() {
   <div class="gate-screen">
     ${appLogoHtml("profile-logo-img")}
     <div class="onboard-step">INSTALLATION</div>
-    <div class="onboard-title">Installe Le Top</div>
+    <div class="onboard-title">Installe Popcorn</div>
     <div class="onboard-text">${escapeHtml(copy.text)}</div>
     <div class="gate-steps">${renderGateSteps(copy.steps)}</div>
     <button class="btn-primary" id="btn-install-gate">${escapeHtml(copy.primaryLabel || installButtonTitle())}</button>
@@ -1603,7 +1638,7 @@ function renderInstallGate() {
       renderPage();
     } else {
       openInstallSheet();
-      showToast("Ouvre Le Top depuis l'icône installée");
+      showToast("Ouvre Popcorn depuis l'icône installée");
     }
   });
 
@@ -1662,7 +1697,7 @@ function profileAvatarHtml(profileId, size) {
 }
 
 function appLogoHtml(className, size = "full") {
-  return `<img class="${className}" src="./letop-${size === "icon" ? "icon-192" : "logo"}.png" alt="Le Top">`;
+  return `<img class="${className}" src="./letop-${size === "icon" ? "icon-192" : "logo"}.png" alt="Popcorn">`;
 }
 
 function tabIconHtml(icon) {
@@ -2144,7 +2179,7 @@ function renderFriendsTabContent(viewed) {
     return `
       ${renderCollectionIntro("PROCHES", "Amis", "Aucun autre profil synchronisé")}
       <div class="empty-state">
-        <div>Aucun autre compte synchronisé pour l'instant. Ouvre Le Top sur l'autre appareil avec la dernière version pour qu'il publie son profil.</div>
+        <div>Aucun autre compte synchronisé pour l'instant. Ouvre Popcorn sur l'autre appareil avec la dernière version pour qu'il publie son profil.</div>
         <small>Synchro : ${knownCount} profil${knownCount > 1 ? "s" : ""} repéré${knownCount > 1 ? "s" : ""}, ${topCount} Top, ${watchedCount} Vus, ${watchlistCount} À voir.</small>
         <button class="btn-secondary" id="btn-force-profile-sync" type="button">Synchroniser mon profil</button>
       </div>`;
@@ -2208,7 +2243,7 @@ function renderApp() {
     <div class="header">
       <div class="header-row">
         <div>
-          <div class="brand-title">${appLogoHtml("brand-logo", "icon")}Le Top</div>
+          <div class="brand-title">${appLogoHtml("brand-logo", "icon")}Popcorn</div>
         </div>
         <div class="header-btns">
           <button class="icon-pill" id="btn-settings" type="button" title="Réglages" aria-label="Ouvrir les réglages">${tabIconHtml("settings")}</button>
@@ -2333,6 +2368,7 @@ function attachAppEvents() {
         return;
       }
       tabScrollPositions[activeTab] = window.scrollY;
+      platformTapFeedback();
       activeTab = nextTab;
       if (activeTab !== "friends") viewingUser = currentUser;
       renderPage();
@@ -3661,44 +3697,44 @@ function installSheetCopy() {
     if (isIosChrome()) {
       return {
         title: "Installer depuis Chrome iPhone",
-        text: "iOS ne permet pas à Le Top d'ouvrir Safari ou de s'installer tout seul. Dans Chrome, utilise le partage. Si l'option manque, copie le lien puis ouvre-le dans Safari.",
+        text: "iOS ne permet pas à Popcorn d'ouvrir Safari ou de s'installer tout seul. Dans Chrome, utilise le partage. Si l'option manque, copie le lien puis ouvre-le dans Safari.",
         primaryLabel: "Voir les étapes",
         steps: [
           "Appuie sur le bouton Partager de Chrome",
           "Choisis Ajouter à l'écran d'accueil",
           "Valide avec Ajouter",
-          "Ouvre Le Top depuis l'icône, puis accepte les notifications"
+          "Ouvre Popcorn depuis l'icône, puis accepte les notifications"
         ]
       };
     }
     return {
       title: "Installer sur iPhone",
-      text: "Dans Safari, ajoute Le Top à l'écran d'accueil. Les notifications marchent ensuite quand tu ouvres l'app depuis sa vraie icône.",
+      text: "Dans Safari, ajoute Popcorn à l'écran d'accueil. Les notifications marchent ensuite quand tu ouvres l'app depuis sa vraie icône.",
       primaryLabel: "Voir les étapes",
       steps: [
         "Appuie sur le bouton Partager de Safari",
         "Choisis Ajouter à l'écran d'accueil",
         "Valide avec Ajouter",
-        "Ouvre Le Top depuis l'icône, puis accepte les notifications"
+        "Ouvre Popcorn depuis l'icône, puis accepte les notifications"
       ]
     };
   }
   if (platform === "android") {
     return {
-      title: "Installer Le Top sur Android",
-      text: "Sur Android, Chrome peut installer Le Top comme une vraie app. Les notifications peuvent ensuite être activées avec la cloche.",
+      title: "Installer Popcorn sur Android",
+      text: "Sur Android, Chrome peut installer Popcorn comme une vraie app. Les notifications peuvent ensuite être activées avec la cloche.",
       primaryLabel: deferredInstallPrompt ? "Installer maintenant" : "Voir les étapes",
       steps: [
         deferredInstallPrompt ? "Appuie sur Installer quand Android le propose" : "Ouvre cette page dans Chrome",
         deferredInstallPrompt ? "Confirme l'installation" : "Appuie sur le menu ⋮",
-        deferredInstallPrompt ? "Ouvre Le Top depuis l'icône" : "Choisis \"Installer l'application\" ou \"Ajouter à l'écran d'accueil\"",
+        deferredInstallPrompt ? "Ouvre Popcorn depuis l'icône" : "Choisis \"Installer l'application\" ou \"Ajouter à l'écran d'accueil\"",
         "Accepte les notifications au lancement"
       ]
     };
   }
   return {
-    title: "Installer Le Top",
-    text: "Sur ordinateur, Chrome ou Edge peuvent ouvrir Le Top comme une app séparée. Les notifications peuvent être activées avec la cloche.",
+    title: "Installer Popcorn",
+    text: "Sur ordinateur, Chrome ou Edge peuvent ouvrir Popcorn comme une app séparée. Les notifications peuvent être activées avec la cloche.",
     primaryLabel: deferredInstallPrompt ? "Installer maintenant" : "Voir les étapes",
     steps: [
       "Ouvre cette page dans Chrome ou Edge",
@@ -3729,7 +3765,7 @@ function renderInstallSheetContent() {
 function openInstallSheet() {
   applyPlatformMode();
   if (isStandaloneApp()) {
-    showToast("Le Top est déjà sur l'écran d'accueil");
+    showToast("Popcorn est déjà sur l'écran d'accueil");
     return;
   }
   if (deferredInstallPrompt && !isIosDevice()) {
@@ -4409,6 +4445,7 @@ document.addEventListener("DOMContentLoaded", () => {
     e.preventDefault();
   }, { passive: false });
 
+  setupPlatformOverlayHistory();
   renderPage();
 
   setTimeout(() => {
@@ -4803,6 +4840,26 @@ body.no-page-scroll #root {
 @keyframes tab-medal-pop { 0% { transform: scale(.72) rotate(-12deg); } 55% { transform: scale(1.12) rotate(5deg); } 100% { transform: scale(1) rotate(0); } }
 @keyframes tab-medal-ribbon { 0% { transform: translateY(-3px); opacity: .35; } 100% { transform: translateY(0); opacity: 1; } }
 @keyframes tab-users-slide { 0% { transform: translateX(3px); opacity: .45; } 100% { transform: translateX(0); opacity: 1; } }
+
+/* Android conserve l'identité Popcorn, avec des proportions proches de
+   Material plutôt que de simuler l'interface système d'un iPhone. */
+.is-android .app-tabbar-wrap { padding: 0 8px max(env(safe-area-inset-bottom, 0px), 8px); }
+.is-android .app-tabbar {
+  height: 72px; padding: 5px; border-radius: 22px; background: rgba(255,255,255,.97);
+  box-shadow: 0 8px 24px rgba(71,59,96,.18);
+}
+.is-android .app-tabbar::after { display: none; }
+.is-android .app-tab-item { height: 62px; border-radius: 18px; }
+.is-android .app-tab-item::before { top: 12px; height: 38px; border-radius: 19px; }
+.is-android .app-tab-item::after { bottom: 2px; }
+.is-android .icon-pill { border-radius: 14px; }
+.is-android .context-sheet {
+  border-radius: 28px 28px 0 0;
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 20px);
+}
+.is-android .context-item, .is-android .movie-action-item { min-height: 56px; }
+.is-android .btn-primary, .is-android .btn-secondary { min-height: 48px; }
+.is-android body:has(.app-tabbar-wrap) .toast { bottom: calc(env(safe-area-inset-bottom, 0px) + 94px); }
 
 .profile-switcher { display: flex; gap: 8px; margin-top: 14px; }
 .profile-switcher-tab { width: calc(100% - 40px); max-width: 980px; margin: 14px auto 6px; overflow-x: auto; padding-bottom: 4px; }
@@ -5579,8 +5636,8 @@ body:has(.app-tabbar-wrap) .toast { bottom: calc(env(safe-area-inset-bottom, 0px
 <div class="context-overlay" id="install-overlay" aria-hidden="true">
   <div class="context-sheet" role="dialog" aria-modal="true" aria-labelledby="install-title">
     <button class="context-handle" type="button" aria-label="Fermer"></button>
-    <img class="install-logo" src="./letop-icon-192.png?v=20260706-product-loop-v9" alt="Le Top">
-    <div class="install-title" id="install-title">Installer Le Top</div>
+    <img class="install-logo" src="./letop-icon-192.png?v=20260706-popcorn-v10" alt="Popcorn">
+    <div class="install-title" id="install-title">Installer Popcorn</div>
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
     <div id="install-actions-wrap"></div>
