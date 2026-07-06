@@ -722,7 +722,34 @@ async function discoverMoviesByGenres(genreIds, params = {}) {
   return data.results || [];
 }
 async function getMovieDetails(id) {
-  return await tmdbFetch(`/movie/${id}`, { append_to_response: "videos,credits,keywords" });
+  return await tmdbFetch(`/movie/${id}`, { append_to_response: "videos,credits,keywords,watch/providers" });
+}
+function watchProvidersFromDetails(details, country = "FR") {
+  return details?.["watch/providers"]?.results?.[country] || null;
+}
+function watchProvidersHtml(providers) {
+  const logo = p => `<img class="watch-provider-logo" src="https://image.tmdb.org/t/p/w92${p.logo_path}" alt="${escapeAttr(p.provider_name)}" title="${escapeAttr(p.provider_name)}" loading="lazy">`;
+  const flatrate = providers?.flatrate || [];
+  const rent = providers?.rent || [];
+  const buy = providers?.buy || [];
+  let label = "";
+  let list = [];
+  if (flatrate.length) { label = "En streaming sur"; list = flatrate; }
+  else if (rent.length) { label = "À la location sur"; list = rent; }
+  else if (buy.length) { label = "À l'achat sur"; list = buy; }
+  if (!list.length) {
+    return `
+      <div class="movie-detail-box">
+        <div class="movie-detail-label">Où le regarder</div>
+        <p>Non disponible en streaming pour l'instant.</p>
+      </div>`;
+  }
+  return `
+    <div class="movie-detail-box">
+      <div class="movie-detail-label">Où le regarder</div>
+      <div class="watch-provider-row">${list.map(logo).join("")}</div>
+      <p class="watch-provider-meta">${escapeHtml(label)} · via JustWatch</p>
+    </div>`;
 }
 async function getSagaMovieResult(id) {
   const movieId = Number(id);
@@ -2873,7 +2900,22 @@ function renderTonightPick(movie) {
     <div class="tonight-pick-kicker">CE SOIR</div>
     <h2>${escapeHtml(movie.title)}</h2>
     <p>${escapeHtml(year)} · ⭐ ${rating}</p>
+    <div id="tonight-pick-providers" class="movie-detail-loading"><span class="loading-spin"></span></div>
   `;
+  loadTonightPickProviders(movie);
+}
+
+async function loadTonightPickProviders(movie) {
+  const zone = document.getElementById("tonight-pick-providers");
+  if (!zone) return;
+  try {
+    const details = await getMovieDetails(movie.id);
+    if (!document.body.contains(zone) || tonightPickMovie?.id !== movie.id) return;
+    zone.outerHTML = watchProvidersHtml(watchProvidersFromDetails(details));
+  } catch (e) {
+    if (!document.body.contains(zone) || tonightPickMovie?.id !== movie.id) return;
+    zone.outerHTML = watchProvidersHtml(null);
+  }
 }
 
 function openTonightPickSheet() {
@@ -2948,6 +2990,7 @@ async function loadMovieActionDetails(movie) {
     const trailer = bestTrailerFromDetails(details);
     const url = trailerUrl(trailer);
     zone.innerHTML = `
+      ${watchProvidersHtml(watchProvidersFromDetails(details))}
       <div class="movie-detail-box">
         <div class="movie-detail-label">Synopsis</div>
         <p>${escapeHtml(overview)}</p>
@@ -5818,6 +5861,8 @@ body.no-page-scroll #root {
 .tonight-pick-poster-empty { background: #E8E4F5; }
 #tonight-pick-content h2 { margin-top: 10px; font-size: 20px; font-weight: 800; line-height: 1.2; }
 #tonight-pick-content p { margin-top: 4px; color: var(--ink-soft); font-size: 12px; font-weight: 700; }
+.tonight-pick-sheet .movie-detail-box { margin-top: 14px; text-align: left; }
+.tonight-pick-sheet .watch-provider-row { justify-content: center; }
 .tonight-pick-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
 .tonight-pick-actions .btn-primary, .tonight-pick-actions .btn-secondary {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
@@ -5897,6 +5942,9 @@ body.no-page-scroll #root {
   box-shadow: 3px 3px 8px var(--shadow-d), -3px -3px 8px var(--shadow-l);
 }
 .movie-trailer-btn:active { transform: scale(0.98); }
+.watch-provider-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.watch-provider-logo { width: 40px; height: 40px; border-radius: 11px; object-fit: cover; box-shadow: 3px 3px 8px var(--shadow-d), -3px -3px 8px var(--shadow-l); }
+.watch-provider-meta { margin-top: 8px; font-size: 10.5px; color: var(--ink-faint); font-weight: 650; }
 .context-item { display: flex; align-items: center; gap: 12px; padding: 14px 12px; border-radius: 14px; font-weight: 600; font-size: 15px; color: var(--ink); cursor: pointer; transition: background 0.1s; }
 .context-item:active { background: var(--bg); }
 .context-item.danger { color: #d64668; }
