@@ -326,6 +326,7 @@ let pendingActionIndex = null;
 let portraitProfileId = null;
 let portraitSlideIndex = 0;
 let portraitMetadataLoading = false;
+let pendingActionBadgeId = null;
 let suppressNextRankClick = false;
 let onboardingNewUser = null;
 let incomingRecos = [];
@@ -891,7 +892,7 @@ async function ensureDirectorFilmography(director) {
       portraitChecked: true,
       updatedAt: Date.now()
     }));
-    if (activeTab === "search" || activeTab === "badges") renderPage();
+    if (activeTab === "search" || activeTab === "badges") renderPagePreservingScroll();
   } catch (e) {
     // The director challenge remains usable with a five-film target when TMDB is unavailable.
   } finally {
@@ -1200,10 +1201,24 @@ function renderBadgeMovieCards(container, movies) {
   container.querySelectorAll(".badge-movie-card").forEach(button => {
     button.addEventListener("click", () => {
       const movie = JSON.parse(button.dataset.movie);
+      pendingActionBadgeId = document.getElementById("badge-movies-overlay")?.dataset.challengeId || null;
       closeBadgeMoviesSheet();
       openMovieActionSheet(movie, "badge");
     });
   });
+}
+function maybeRestoreBadgeMoviesSheet() {
+  if (!pendingActionBadgeId) return;
+  if (activeTab !== "badges") {
+    pendingActionBadgeId = null;
+    return;
+  }
+  const stillInFlow = ["movie-action-overlay", "rating-overlay", "recommend-overlay"]
+    .some(id => document.getElementById(id)?.classList.contains("show"));
+  if (stillInFlow) return;
+  const challengeId = pendingActionBadgeId;
+  pendingActionBadgeId = null;
+  openBadgeMoviesSheet(challengeId);
 }
 async function openBadgeMoviesSheet(challengeId) {
   let challenge = cinemaChallengeCatalog().find(item => item.id === challengeId);
@@ -2170,19 +2185,45 @@ function renderBadgesTabContent() {
     { id: "all", label: "Tous" }
   ];
   return `
-    <div class="badges-tab-hero">
-      <span>COLLECTION</span>
-      <strong>${unlocked} / ${catalog.length} badges débloqués</strong>
-      <p>Chaque film vu peut te rapprocher d'un nouveau trophée.</p>
-    </div>
-    ${renderChallengeSpotlightHtml(false)}
-    <section class="badges-tab-collection">
-      <div class="badges-tab-heading"><strong>Tous les badges</strong><span>Touche un badge pour voir les films associés</span></div>
-      <div class="badge-filter-bar" role="group" aria-label="Filtrer les badges">
-        ${filters.map(filter => `<button class="badge-filter-btn ${badgeGalleryFilter === filter.id ? "active" : ""}" data-filter="${filter.id}" type="button" aria-pressed="${badgeGalleryFilter === filter.id}">${filter.label}</button>`).join("")}
+    <div id="badges-tab-root">
+      <div class="badges-tab-hero">
+        <span>COLLECTION</span>
+        <strong>${unlocked} / ${catalog.length} badges débloqués</strong>
+        <p>Chaque film vu peut te rapprocher d'un nouveau trophée.</p>
       </div>
-      <div class="cinema-challenge-gallery" id="badges-challenge-gallery" data-filter="${escapeAttr(badgeGalleryFilter)}"></div>
-    </section>`;
+      ${renderChallengeSpotlightHtml(false)}
+      <section class="badges-tab-collection">
+        <div class="badges-tab-heading"><strong>Tous les badges</strong><span>Touche un badge pour voir les films associés</span></div>
+        <div class="badge-filter-bar" role="group" aria-label="Filtrer les badges">
+          ${filters.map(filter => `<button class="badge-filter-btn ${badgeGalleryFilter === filter.id ? "active" : ""}" data-filter="${filter.id}" type="button" aria-pressed="${badgeGalleryFilter === filter.id}">${filter.label}</button>`).join("")}
+        </div>
+        <div class="cinema-challenge-gallery" id="badges-challenge-gallery" data-filter="${escapeAttr(badgeGalleryFilter)}"></div>
+      </section>
+    </div>`;
+}
+function attachBadgesTabEvents() {
+  document.querySelectorAll(".badge-filter-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (badgeGalleryFilter === btn.dataset.filter) return;
+      badgeGalleryFilter = btn.dataset.filter;
+      renderPage();
+    });
+  });
+  document.getElementById("btn-open-challenges")?.addEventListener("click", openChallengesSheet);
+  document.getElementById("btn-challenge-movies")?.addEventListener("click", () => {
+    const challengeId = document.querySelector(".cinema-challenge-featured")?.dataset.challengeId;
+    if (challengeId) openBadgeMoviesSheet(challengeId);
+  });
+}
+function refreshBadgesTabIfActive() {
+  if (activeTab !== "badges") return;
+  const root = document.getElementById("badges-tab-root");
+  if (!root) return;
+  const savedScrollY = window.scrollY;
+  root.outerHTML = renderBadgesTabContent();
+  attachBadgesTabEvents();
+  renderActiveTabView();
+  if (savedScrollY) requestAnimationFrame(() => window.scrollTo(0, savedScrollY));
 }
 
 function renderFriendsTabContent(viewed) {
@@ -2416,18 +2457,7 @@ function attachAppEvents() {
   };
   document.getElementById("btn-toggle-incoming-recos")?.addEventListener("click", toggleIncomingRecos);
   document.getElementById("btn-show-incoming-recos")?.addEventListener("click", toggleIncomingRecos);
-  document.querySelectorAll(".badge-filter-btn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      if (badgeGalleryFilter === btn.dataset.filter) return;
-      badgeGalleryFilter = btn.dataset.filter;
-      renderPage();
-    });
-  });
-  document.getElementById("btn-open-challenges")?.addEventListener("click", openChallengesSheet);
-  document.getElementById("btn-challenge-movies")?.addEventListener("click", () => {
-    const challengeId = document.querySelector(".cinema-challenge-featured")?.dataset.challengeId;
-    if (challengeId) openBadgeMoviesSheet(challengeId);
-  });
+  attachBadgesTabEvents();
 
   document.getElementById("btn-reset")?.addEventListener("click", () => {
     openConfirmSheet({
@@ -2713,6 +2743,7 @@ function closeRatingSheet() {
   pendingRatingMovie = null;
   pendingRatingOrigin = null;
   pendingRatingRecoDoc = null;
+  setTimeout(maybeRestoreBadgeMoviesSheet, 0);
 }
 
 async function addToWatched(movie, rating) {
@@ -2724,7 +2755,7 @@ async function addToWatched(movie, rating) {
   const updated = existingIndex >= 0 ? [...list] : [watchedMovie, ...list];
   if (existingIndex >= 0) updated[existingIndex] = { ...updated[existingIndex], ...watchedMovie };
   allWatched = { ...allWatched, [currentUser]: updated };
-  if (activeTab === "badges") renderPage();
+  if (activeTab === "badges") refreshBadgesTabIfActive();
   else renderWatchedList();
   showToast(`${movie.title} noté ${rating}/10`);
   try {
@@ -2752,7 +2783,7 @@ async function addToWatched(movie, rating) {
       };
       const enrichedList = updated.map(item => Number(item.id) === Number(enriched.id) ? enriched : item);
       await saveWatchedToCloud(currentUser, enrichedList);
-      if (activeTab === "badges") renderPage();
+      if (activeTab === "badges") refreshBadgesTabIfActive();
     } catch (e) {
       // ensureChallengeMetadata will retry without losing the rating.
     }
@@ -2909,6 +2940,7 @@ function closeMovieActionSheet() {
   pendingActionMovie = null;
   pendingActionOrigin = null;
   pendingActionIndex = null;
+  setTimeout(maybeRestoreBadgeMoviesSheet, 0);
 }
 
 function closeOverlayElement(overlay) {
@@ -3399,6 +3431,7 @@ function openRecommendSheet(movie) {
 }
 function closeRecommendSheet() {
   document.getElementById("recommend-overlay").classList.remove("show");
+  setTimeout(maybeRestoreBadgeMoviesSheet, 0);
 }
 
 function notificationStatusLabel() {
@@ -4152,7 +4185,7 @@ async function ensureChallengeMetadata() {
 
     const director = preferredDirectorFromSeen(challengeSeenMovies());
     if (director) await ensureDirectorFilmography(director);
-    if (activeTab === "badges" && (rankedChanged || watchedChanged)) renderPage();
+    if (activeTab === "badges" && (rankedChanged || watchedChanged)) refreshBadgesTabIfActive();
   } catch (e) {
     // Badges keep their basic genre progress when metadata enrichment fails.
   } finally {
