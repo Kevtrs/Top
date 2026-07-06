@@ -724,12 +724,24 @@ function watchProvidersFromDetails(details, country = "FR") {
   return details?.["watch/providers"]?.results?.[country] || null;
 }
 const MAJOR_WATCH_PROVIDERS = [
-  "Netflix", "Amazon Prime Video", "Disney Plus", "Canal+", "Apple TV",
-  "Paramount Plus", "Max", "OCS", "ARTE", "YouTube"
+  name => /netflix/i.test(name),
+  name => /prime video/i.test(name),
+  name => /canal\+/i.test(name),
+  name => /disney/i.test(name),
+  name => /apple tv/i.test(name),
+  name => /^paramount\s*\+?$/i.test(name.trim()),
+  name => /^(hbo\s*)?max$/i.test(name.trim()),
+  name => /^ocs$/i.test(name.trim()),
+  name => /^arte$/i.test(name.trim()),
+  name => /google play/i.test(name),
+  name => /youtube/i.test(name)
 ];
 function watchProviderPriorityRank(name) {
-  const idx = MAJOR_WATCH_PROVIDERS.findIndex(major => name.toLowerCase().includes(major.toLowerCase()));
+  const idx = MAJOR_WATCH_PROVIDERS.findIndex(test => test(name));
   return idx === -1 ? MAJOR_WATCH_PROVIDERS.length : idx;
+}
+function isMajorWatchProvider(name) {
+  return MAJOR_WATCH_PROVIDERS.some(test => test(name));
 }
 function sortWatchProviders(list) {
   return [...list].sort((a, b) => watchProviderPriorityRank(a.provider_name) - watchProviderPriorityRank(b.provider_name)
@@ -742,15 +754,16 @@ function watchProvidersHtml(providers, movieTitle = "") {
       ${tag ? `<span class="watch-provider-tag">${escapeHtml(tag)}</span>` : ""}
     </div>`;
 
-  const included = sortWatchProviders([...(providers?.flatrate || []), ...(providers?.ads || [])]);
+  const isMajor = p => isMajorWatchProvider(p.provider_name);
+  const included = sortWatchProviders([...(providers?.flatrate || []), ...(providers?.ads || [])].filter(isMajor));
   const includedIds = new Set(included.map(p => p.provider_id));
 
   const rentBuyMap = new Map();
-  (providers?.rent || []).forEach(p => {
+  (providers?.rent || []).filter(isMajor).forEach(p => {
     if (includedIds.has(p.provider_id)) return;
     rentBuyMap.set(p.provider_id, { ...p, tags: new Set(["Location"]) });
   });
-  (providers?.buy || []).forEach(p => {
+  (providers?.buy || []).filter(isMajor).forEach(p => {
     if (includedIds.has(p.provider_id)) return;
     const existing = rentBuyMap.get(p.provider_id);
     if (existing) existing.tags.add("Achat");
