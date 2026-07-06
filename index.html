@@ -484,6 +484,7 @@ function profilePayload(userId, preferredName = "") {
     initial: existing.initial || name[0]?.toUpperCase() || "?",
     color: existing.color || PROFILE_COLORS[Math.max(PROFILES.length + PROFILE_INDEX.length, 0) % PROFILE_COLORS.length],
     createdAt: existing.createdAt || Date.now(),
+    showcaseBadges: existing.showcaseBadges || [],
     updatedAt: Date.now()
   };
 }
@@ -1307,7 +1308,9 @@ async function openBadgeMoviesSheet(challengeId) {
       <p>${escapeHtml(challenge.description)}</p>
       <div class="cinema-challenge-progress"><i style="width:${percent}%"></i></div>
     </div>
-    ${challenge.completed ? "" : `<button class="btn-secondary badge-objective-btn" id="btn-set-badge-objective" type="button">${active?.id === challenge.id ? "Objectif actif" : "Choisir comme objectif"}</button>`}`;
+    ${challenge.completed
+      ? `<button class="btn-secondary badge-objective-btn" id="btn-toggle-showcase-badge" type="button">${isBadgeShowcased(challenge.id) ? "★ Dans ta vitrine" : "☆ Ajouter à ta vitrine"}</button>`
+      : `<button class="btn-secondary badge-objective-btn" id="btn-set-badge-objective" type="button">${active?.id === challenge.id ? "Objectif actif" : "Choisir comme objectif"}</button>`}`;
   list.innerHTML = `<div class="badge-movies-loading">${Array(6).fill('<span></span>').join("")}</div>`;
 
   document.getElementById("btn-set-badge-objective")?.addEventListener("click", event => {
@@ -1316,6 +1319,14 @@ async function openBadgeMoviesSheet(challengeId) {
     if (activeTab === "badges") refreshBadgesTabIfActive();
     else renderPagePreservingScroll();
     showToast(`${challenge.name} devient ton objectif`);
+  });
+  document.getElementById("btn-toggle-showcase-badge")?.addEventListener("click", event => {
+    const updated = toggleShowcaseBadge(challenge);
+    if (!updated) return;
+    const showcased = isBadgeShowcased(challenge.id);
+    event.currentTarget.textContent = showcased ? "★ Dans ta vitrine" : "☆ Ajouter à ta vitrine";
+    showToast(showcased ? `${challenge.name} ajouté à ta vitrine` : `${challenge.name} retiré de ta vitrine`);
+    if (activeTab === "badges") refreshBadgesTabIfActive();
   });
 
   try {
@@ -1484,8 +1495,51 @@ function normalizeProfileData(profile, fallbackId) {
     name,
     initial: profile?.initial || profile?.profileInitial || name.trim()[0]?.toUpperCase() || "?",
     color: profile?.color || profile?.profileColor || "var(--lav)",
-    createdAt: profile?.createdAt || profile?.profileCreatedAt || 0
+    createdAt: profile?.createdAt || profile?.profileCreatedAt || 0,
+    showcaseBadges: profile?.showcaseBadges || []
   };
+}
+function myShowcaseBadges() {
+  return profileById(currentUser)?.showcaseBadges || [];
+}
+function isBadgeShowcased(challengeId) {
+  return myShowcaseBadges().some(b => b.id === challengeId);
+}
+function snapshotBadgeForShowcase(challenge) {
+  return {
+    id: challenge.id,
+    name: challenge.name,
+    art: challenge.art || null,
+    badgePhoto: challenge.badgePhoto || null,
+    badgeIcon: challenge.badgeIcon || null,
+    badgeShape: challenge.badgeShape || null,
+    badgePosition: challenge.badgePosition || null,
+    backdropPath: challenge.backdropPath || null,
+    legendary: challenge.legendary || false,
+    symbol: challenge.symbol || null
+  };
+}
+async function setShowcaseBadges(list) {
+  if (!currentUser) return;
+  const me = profileById(currentUser) || fallbackProfile(currentUser);
+  const updated = { ...me, showcaseBadges: list, updatedAt: Date.now() };
+  PROFILES = [...PROFILES.filter(p => p.id !== currentUser), updated];
+  await setDoc(doc(db, "profiles", currentUser), updated, { merge: true });
+}
+function toggleShowcaseBadge(challenge) {
+  const current = myShowcaseBadges();
+  let updated;
+  if (current.some(b => b.id === challenge.id)) {
+    updated = current.filter(b => b.id !== challenge.id);
+  } else {
+    if (current.length >= 3) {
+      showToast("Retire un badge de ta vitrine avant d'en ajouter un autre");
+      return null;
+    }
+    updated = [...current, snapshotBadgeForShowcase(challenge)];
+  }
+  setShowcaseBadges(updated).catch(() => showToast("Erreur d'enregistrement"));
+  return updated;
 }
 function hasProfile(profileId) {
   return !!profileById(profileId);
@@ -2265,6 +2319,7 @@ function renderWatchlistTabContent() {
 function renderBadgesTabContent() {
   const catalog = cinemaChallengeCatalog();
   const unlocked = catalog.filter(challenge => challenge.completed).length;
+  const showcase = myShowcaseBadges();
   const filters = [
     { id: "progress", label: "À finir" },
     { id: "unlocked", label: "Gagnés" },
@@ -2278,6 +2333,13 @@ function renderBadgesTabContent() {
         <strong>${unlocked} / ${catalog.length} badges débloqués</strong>
         <p>Chaque film vu peut te rapprocher d'un nouveau trophée.</p>
       </div>
+      ${showcase.length ? `
+      <div class="badges-showcase">
+        <div class="badges-showcase-label">Ta vitrine <small>· visible par tes amis</small></div>
+        <div class="badges-showcase-row">
+          ${showcase.map(b => `<button class="badges-showcase-item" data-challenge-id="${escapeAttr(b.id)}" type="button" aria-label="${escapeAttr(b.name)}">${challengeBadgeArtHtml(b)}</button>`).join("")}
+        </div>
+      </div>` : ""}
       ${renderChallengeSpotlightHtml(false)}
       <section class="badges-tab-collection">
         <div class="badges-tab-heading"><strong>Tous les badges</strong><span>Touche un badge pour voir les films associés</span></div>
@@ -2300,6 +2362,9 @@ function attachBadgesTabEvents() {
   document.getElementById("btn-challenge-movies")?.addEventListener("click", () => {
     const challengeId = document.querySelector(".cinema-challenge-featured")?.dataset.challengeId;
     if (challengeId) openBadgeMoviesSheet(challengeId);
+  });
+  document.querySelectorAll(".badges-showcase-item").forEach(btn => {
+    btn.addEventListener("click", () => openBadgeMoviesSheet(btn.dataset.challengeId));
   });
 }
 function refreshBadgesTabIfActive() {
@@ -2337,6 +2402,7 @@ function renderFriendsTabContent(viewed) {
           <span>
             <strong>${escapeHtml(p.name)}</strong>
             <small>${(allRankings[p.id] || []).length} film${(allRankings[p.id] || []).length > 1 ? "s" : ""} dans son Top</small>
+            ${(p.showcaseBadges || []).length ? `<span class="friend-showcase-row">${p.showcaseBadges.map(b => `<span class="friend-showcase-badge">${challengeBadgeArtHtml(b)}</span>`).join("")}</span>` : ""}
           </span>
         </button>
       `).join("")}
@@ -5117,6 +5183,8 @@ body.no-page-scroll #root {
   box-shadow: inset 4px 4px 10px var(--shadow-d), inset -4px -4px 10px var(--shadow-l);
 }
 .friend-card span:not(.avatar-initial-sm) { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.friend-showcase-row { display: flex; gap: 4px; margin-top: 2px; }
+.friend-showcase-badge { display: inline-block; width: 20px; height: 20px; flex-shrink: 0; }
 .friend-card strong { font-size: 14px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .friend-card small { font-size: 11px; color: var(--ink-soft); font-weight: 700; line-height: 1.25; }
 
@@ -5298,6 +5366,14 @@ body.no-page-scroll #root {
 }
 .badges-tab-hero > strong { display: block; margin-top: 5px; font-size: 22px; font-weight: 800; line-height: 1.15; }
 .badges-tab-hero > p { margin-top: 5px; color: var(--ink-soft); font-size: 11px; font-weight: 650; line-height: 1.4; }
+.badges-showcase { width: calc(100% - 40px); max-width: 980px; margin: 16px auto 0; }
+.badges-showcase-label {
+  font-family: 'DM Mono', monospace; font-size: 10px; font-weight: 700; color: var(--ink-soft);
+  text-transform: uppercase; letter-spacing: .4px; margin-bottom: 8px;
+}
+.badges-showcase-label small { text-transform: none; font-weight: 600; opacity: .8; }
+.badges-showcase-row { display: flex; gap: 12px; }
+.badges-showcase-item { width: 48px; height: 48px; border: none; background: none; padding: 0; cursor: pointer; flex-shrink: 0; }
 .badges-tab-collection { width: calc(100% - 40px); max-width: 980px; margin: 24px auto 112px; }
 .badges-tab-heading { margin-bottom: 12px; }
 .badges-tab-heading strong { display: block; font-size: 16px; font-weight: 800; }
