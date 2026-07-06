@@ -659,7 +659,7 @@ function removeRecoLocally(docId) {
 async function completeReco(docId, toastText = "") {
   if (!docId) return;
   removeRecoLocally(docId);
-  renderPage();
+  renderPagePreservingScroll();
   try {
     await dismissReco(docId);
     if (toastText) showToast(toastText);
@@ -2297,6 +2297,12 @@ function renderPage() {
   }
 }
 
+function renderPagePreservingScroll() {
+  const savedScrollY = window.scrollY;
+  renderPage();
+  if (savedScrollY) requestAnimationFrame(() => window.scrollTo(0, savedScrollY));
+}
+
 function renderActiveTabView() {
   if (activeTab === "search") {
     ensureChallengeMetadata();
@@ -3600,7 +3606,7 @@ async function setupForegroundPushListener() {
     onMessage(messaging, payload => {
       const body = payload.notification?.body || payload.data?.body || "Nouvelle recommandation reçue";
       showToast(body);
-      if (profilesSynced && rankingsSynced && currentUser && !onboardingNewUser) renderPage();
+      if (profilesSynced && rankingsSynced && currentUser && !onboardingNewUser) renderPagePreservingScroll();
     });
     foregroundPushListening = true;
   } catch (e) {}
@@ -4522,17 +4528,23 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (!onboardingNewUser && serverConfirmed) normalizeActiveUsers();
     if (currentUser && !viewingUser) viewingUser = currentUser;
-    renderPage();
+    renderPagePreservingScroll();
   });
   listenProfileIndex(list => {
     PROFILE_INDEX = list;
     if (currentUser && !profileById(currentUser)) ensureProfileInCloud(currentUser);
-    if (profilesSynced && rankingsSynced && currentUser && !onboardingNewUser) renderPage();
+    if (profilesSynced && rankingsSynced && currentUser && !onboardingNewUser) renderPagePreservingScroll();
   });
   listenAllRankings(data => {
     allRankings = data;
+    const firstSync = !rankingsSynced;
     rankingsSynced = true;
-    renderPage();
+    if (firstSync || !profilesSynced || onboardingNewUser) {
+      renderPage();
+      return;
+    }
+    if (currentUser && (activeTab === "top" || activeTab === "friends")) renderRanked();
+    if (currentUser && activeTab === "search" && recentExpanded) renderRecentFeed();
   });
   listenAllWatched(data => {
     allWatched = data;
@@ -4545,7 +4557,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   listenIncomingRecos(data => {
     incomingRecos = data;
-    if (profilesSynced && rankingsSynced && currentUser && !onboardingNewUser) renderPage();
+    if (profilesSynced && rankingsSynced && currentUser && !onboardingNewUser) renderPagePreservingScroll();
   });
 });
 </script>
