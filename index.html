@@ -368,7 +368,7 @@ window.addEventListener("appinstalled", () => {
   applyPlatformMode();
   const toast = document.getElementById("toast");
   if (toast) showToast("Popcorn est installé");
-  renderPage();
+  renderPagePreservingScroll();
 });
 
 document.addEventListener("visibilitychange", async () => {
@@ -380,7 +380,7 @@ document.addEventListener("visibilitychange", async () => {
   try { await enableNetwork(db); } catch(e) {}
   if (document.getElementById("root")) {
     applyPlatformMode();
-    renderPage();
+    renderPagePreservingScroll();
   }
 });
 
@@ -1243,7 +1243,8 @@ async function openBadgeMoviesSheet(challengeId) {
   document.getElementById("btn-set-badge-objective")?.addEventListener("click", event => {
     setActiveCinemaChallenge(challenge.id);
     event.currentTarget.textContent = "Objectif actif";
-    renderPage();
+    if (activeTab === "badges") refreshBadgesTabIfActive();
+    else renderPagePreservingScroll();
     showToast(`${challenge.name} devient ton objectif`);
   });
 
@@ -2434,7 +2435,7 @@ function attachAppEvents() {
   });
   const toggleIncomingRecos = () => {
     incomingRecosExpanded = !incomingRecosExpanded;
-    renderPage();
+    renderPagePreservingScroll();
   };
   document.getElementById("btn-toggle-incoming-recos")?.addEventListener("click", toggleIncomingRecos);
   document.getElementById("btn-show-incoming-recos")?.addEventListener("click", toggleIncomingRecos);
@@ -2459,7 +2460,7 @@ function attachAppEvents() {
     publishedProfileIds.delete(currentUser);
     await ensureProfileInCloud(currentUser);
     showToast("Profil synchronisé");
-    renderPage();
+    renderPagePreservingScroll();
   });
 
   document.querySelectorAll(".profile-chip, .friend-card").forEach(el => {
@@ -4583,6 +4584,7 @@ document.addEventListener("DOMContentLoaded", () => {
     allWatched = data;
     if (profilesSynced && rankingsSynced && currentUser && activeTab === "watched") renderWatchedList();
     if (profilesSynced && rankingsSynced && currentUser && activeTab === "search" && recentExpanded) renderRecentFeed();
+    if (profilesSynced && rankingsSynced && currentUser && activeTab === "badges") refreshBadgesTabIfActive();
   });
   listenAllWatchlist(data => {
     allWatchlist = data;
