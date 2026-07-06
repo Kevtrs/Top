@@ -9,9 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Le Top 🍿</title>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260706-tabbar-v8">
-<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260706-tabbar-v8">
-<link rel="manifest" href="./site.webmanifest?v=20260706-tabbar-v8">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260706-product-loop-v9">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260706-product-loop-v9">
+<link rel="manifest" href="./site.webmanifest?v=20260706-product-loop-v9">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -40,7 +40,7 @@ const TMDB_BACKDROP = "https://image.tmdb.org/t/p/w500";
 const TMDB_PROFILE = "https://image.tmdb.org/t/p/w185";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260706-tabbar-v8";
+const PWA_VERSION = "20260706-product-loop-v9";
 const APP_PUBLIC_URL = "https://kevtrs.github.io/Top/";
 
 const APP_TABS = [
@@ -313,8 +313,8 @@ const tabScrollPositions = {};
 let badgeGalleryFilter = "progress";
 let recoExpanded = false;
 let recentExpanded = false;
+let incomingRecosExpanded = false;
 let draggedIndex = null;
-let activeContextIndex = null;
 let touchDragState = null;
 let pendingRatingMovie = null;
 let pendingRatingOrigin = null;
@@ -343,6 +343,9 @@ let foregroundPushListening = false;
 let installGateSheetShown = false;
 let scrollLockFrame = null;
 let toastTimer = null;
+let pendingConfirmAction = null;
+let badgeUnlockQueue = [];
+let activeBadgeUnlockId = null;
 
 const PENDING_PUSH_TOKEN_KEY = "letop_pending_push_token";
 const PUSH_BOUND_KEY = "letop_push_bound";
@@ -1245,6 +1248,61 @@ function closeBadgeMoviesSheet() {
   document.getElementById("badge-movies-overlay")?.classList.remove("show");
   scheduleScrollLockUpdate();
 }
+function showNextBadgeUnlock() {
+  const overlay = document.getElementById("badge-unlock-overlay");
+  if (!overlay || overlay.classList.contains("show") || !badgeUnlockQueue.length) return;
+  const challengeId = badgeUnlockQueue.shift();
+  const challenge = cinemaChallengeCatalog().find(item => item.id === challengeId);
+  if (!challenge) {
+    showNextBadgeUnlock();
+    return;
+  }
+  activeBadgeUnlockId = challenge.id;
+  document.getElementById("badge-unlock-content").innerHTML = `
+    <div class="badge-unlock-kicker">Nouveau badge</div>
+    <div class="badge-unlock-art">${challengeBadgeArtHtml(challenge)}</div>
+    <h2 id="badge-unlock-title">${escapeHtml(challenge.name)}</h2>
+    <p>${escapeHtml(challenge.description)}</p>
+    <div class="badge-unlock-reward">${surfaceIconHtml("check", "badge-unlock-check")}<span>Ajouté à ta collection</span></div>`;
+  overlay.classList.add("show");
+  scheduleScrollLockUpdate();
+  requestAnimationFrame(() => {
+    const art = overlay.querySelector(".badge-unlock-art");
+    if (art) fireConfetti(art);
+  });
+}
+function queueBadgeUnlocks(challengeIds) {
+  challengeIds.forEach(id => {
+    if (id && id !== activeBadgeUnlockId && !badgeUnlockQueue.includes(id)) badgeUnlockQueue.push(id);
+  });
+  showNextBadgeUnlock();
+}
+function closeBadgeUnlockSheet() {
+  document.getElementById("badge-unlock-overlay")?.classList.remove("show");
+  activeBadgeUnlockId = null;
+  scheduleScrollLockUpdate();
+  setTimeout(showNextBadgeUnlock, 180);
+}
+function viewUnlockedBadge() {
+  const challengeId = activeBadgeUnlockId;
+  closeBadgeUnlockSheet();
+  if (!challengeId) return;
+  activeTab = "badges";
+  badgeGalleryFilter = "unlocked";
+  renderPage();
+  setTimeout(() => openBadgeMoviesSheet(challengeId), 100);
+}
+function activeChallengeProgressSnapshot() {
+  const challenge = activeCinemaChallenge();
+  return challenge ? { id: challenge.id, current: challenge.current } : null;
+}
+function announceChallengeProgress(snapshot) {
+  if (!snapshot) return;
+  const challenge = cinemaChallengeCatalog().find(item => item.id === snapshot.id);
+  if (!challenge || challenge.current <= snapshot.current) return;
+  announceNewChallengeUnlocks();
+  if (!challenge.completed) showToast(`${challenge.name} · ${challenge.current}/${challenge.threshold}`);
+}
 function announceNewChallengeUnlocks() {
   if (!currentUser) return;
   const key = challengeUnlocksKey(currentUser);
@@ -1259,10 +1317,7 @@ function announceNewChallengeUnlocks() {
   const fresh = completed.filter(id => !known.includes(id));
   if (!fresh.length) return;
   localStorage.setItem(key, JSON.stringify([...new Set([...known, ...completed])]));
-  const challenge = cinemaChallengeCatalog().find(item => item.id === fresh[0]);
-  showToast(`Badge débloqué : ${challenge?.name || "Défi cinéma"}`);
-  const origin = document.querySelector(".brand-logo") || document.body;
-  fireConfetti(origin);
+  queueBadgeUnlocks(fresh);
 }
 function recoPrefsLocalKey(userId) {
   return `letop_reco_prefs_${userId}`;
@@ -1760,10 +1815,10 @@ function renderCreateProfileScreen(canCancel = false) {
   <div class="onboard-screen">
     ${appLogoHtml("profile-logo-img")}
     <div class="onboard-step">TON PROFIL</div>
-    <div class="onboard-title">Crée ton espace 🎬</div>
+    <div class="onboard-title">Crée ton espace</div>
     <div class="onboard-text">Entre ton prénom. Les autres profils restent cachés, donc personne ne peut changer de compte depuis une liste.</div>
     <div class="search-box" id="newname-box" style="margin-top:18px">
-      <span class="search-icon">✏️</span>
+      <span class="search-icon">${tabIconHtml("users")}</span>
       <input type="text" id="newname-input" placeholder="Ton prénom..." maxlength="20">
     </div>
     <button class="btn-primary" id="btn-confirm-name" style="margin-top:16px">Continuer</button>
@@ -1847,10 +1902,10 @@ function renderOnboarding() {
   document.getElementById("root").innerHTML = `
   <div class="onboard-screen">
     <div class="onboard-step">ÉTAPE 1/1</div>
-    <div class="onboard-title">Salut ${escapeHtml(me.name)} 👋</div>
+    <div class="onboard-title">Salut ${escapeHtml(me.name)}</div>
     <div class="onboard-text">Cherche ton film préféré — il deviendra ton numéro 1 <strong>et</strong> ta photo de profil.</div>
     <div class="search-box" id="onboard-search-box" style="margin-top:18px">
-      <span class="search-icon">🔍</span>
+      <span class="search-icon">${tabIconHtml("search")}</span>
       <input type="text" id="onboard-search-input" placeholder="Ton film n°1...">
     </div>
     <div id="onboard-results"></div>
@@ -1894,7 +1949,7 @@ function renderOnboarding() {
             try {
               await ensureProfileInCloud(userId, me.name);
               await saveRankingToCloud(userId, [movie]);
-              showToast(`Bienvenue ${me.name} 🎬`);
+              showToast(`Bienvenue ${me.name}`);
             } catch (e) {
               onboardingNewUser = userId;
               showToast("Erreur d'enregistrement");
@@ -1915,9 +1970,15 @@ function renderOnboarding() {
 
 function renderIncomingRecosHtml(myIncoming) {
   if (!myIncoming.length) return "";
+  const visibleRecos = incomingRecosExpanded ? myIncoming : myIncoming.slice(0, 2);
+  const hiddenCount = Math.max(0, myIncoming.length - visibleRecos.length);
   return `
   <div class="reco-banner-zone" id="reco-banner-zone">
-    ${myIncoming.map(r => {
+    <div class="reco-inbox-heading">
+      <div><strong>Recommandations reçues</strong><span>${myIncoming.length} en attente de ta réponse</span></div>
+      ${myIncoming.length > 2 ? `<button id="btn-toggle-incoming-recos" type="button" aria-expanded="${incomingRecosExpanded}">${incomingRecosExpanded ? "Réduire" : `Voir les ${myIncoming.length}`}</button>` : ""}
+    </div>
+    ${visibleRecos.map(r => {
       const fromProfile = PROFILES.find(p => p.id === r.from);
       const poster = r.movie.poster_path ? TMDB_IMG + r.movie.poster_path : "";
       return `
@@ -1936,6 +1997,7 @@ function renderIncomingRecosHtml(myIncoming) {
         </div>
       </div>`;
     }).join("")}
+    ${hiddenCount ? `<button class="reco-inbox-more" id="btn-show-incoming-recos" type="button">${surfaceIconHtml("hand", "reco-inbox-more-icon")}<span><strong>${hiddenCount} autre${hiddenCount > 1 ? "s" : ""} recommandation${hiddenCount > 1 ? "s" : ""}</strong><small>Elles restent gardées jusqu'à ta réponse</small></span></button>` : ""}
   </div>`;
 }
 
@@ -1958,12 +2020,7 @@ function renderSearchTabContent(myIncoming) {
   return `
     ${renderIncomingRecosHtml(myIncoming)}
     ${renderSearchBox("global", "Cherche un film...")}
-    <div class="quick-home-grid">
-      <button class="quick-home-card" data-go-tab="top" type="button">${surfaceIconHtml("crown", "quick-home-icon")}<strong>Top</strong><small id="quick-summary-top">${myRanked().length} film${myRanked().length > 1 ? "s" : ""} classé${myRanked().length > 1 ? "s" : ""}</small></button>
-      <button class="quick-home-card" data-go-tab="watched" type="button">${surfaceIconHtml("ticket", "quick-home-icon")}<strong>Vus</strong><small id="quick-summary-watched">${myWatched().length} film${myWatched().length > 1 ? "s" : ""} noté${myWatched().length > 1 ? "s" : ""}</small></button>
-      <button class="quick-home-card" data-go-tab="watchlist" type="button">${surfaceIconHtml("popcorn", "quick-home-icon")}<strong>À voir</strong><small id="quick-summary-watchlist">${myWatchlist().length} film${myWatchlist().length > 1 ? "s" : ""} gardé${myWatchlist().length > 1 ? "s" : ""}</small></button>
-      <button class="quick-home-card" data-go-tab="friends" type="button">${surfaceIconHtml("users", "quick-home-icon")}<strong>Amis</strong><small id="quick-summary-friends">${friendProfiles().length} profil${friendProfiles().length > 1 ? "s" : ""}</small></button>
-    </div>
+    ${renderChallengeSpotlightHtml(true)}
 
     <div class="accordion-section">
       <button class="accordion-header" id="reco-accordion-header" type="button" aria-expanded="${recoExpanded}">
@@ -2282,7 +2339,7 @@ function attachAppEvents() {
       requestAnimationFrame(() => window.scrollTo({ top: tabScrollPositions[activeTab] || 0, behavior: "auto" }));
     });
   });
-  document.querySelectorAll(".quick-home-card, .empty-state-action").forEach(btn => {
+  document.querySelectorAll(".empty-state-action").forEach(btn => {
     btn.addEventListener("click", () => {
       tabScrollPositions[activeTab] = window.scrollY;
       activeTab = btn.dataset.goTab;
@@ -2292,6 +2349,12 @@ function attachAppEvents() {
       requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
     });
   });
+  const toggleIncomingRecos = () => {
+    incomingRecosExpanded = !incomingRecosExpanded;
+    renderPage();
+  };
+  document.getElementById("btn-toggle-incoming-recos")?.addEventListener("click", toggleIncomingRecos);
+  document.getElementById("btn-show-incoming-recos")?.addEventListener("click", toggleIncomingRecos);
   document.querySelectorAll(".badge-filter-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       if (badgeGalleryFilter === btn.dataset.filter) return;
@@ -2306,11 +2369,17 @@ function attachAppEvents() {
   });
 
   document.getElementById("btn-reset")?.addEventListener("click", () => {
-    if (confirm("Effacer tout ton classement ?")) {
+    openConfirmSheet({
+      title: "Vider ton Top ?",
+      message: "Tes films vus et ta liste À voir resteront intacts.",
+      confirmLabel: "Vider le Top",
+      danger: true,
+      onConfirm: () => {
       saveRankingToCloud(currentUser, []).catch(() => showToast("Erreur d'enregistrement"));
       renderRanked();
       showToast("Classement réinitialisé");
-    }
+      }
+    });
   });
 
   document.getElementById("btn-force-profile-sync")?.addEventListener("click", async () => {
@@ -2543,10 +2612,12 @@ function addToRanked(movie) {
   if (!currentUser) return;
   const list = myRanked();
   if (list.some(m => m.id === movie.id)) { showToast("Déjà dans ton classement"); return; }
+  const progressSnapshot = activeChallengeProgressSnapshot();
   const updated = [...list, simplifyMovie(movie)];
   saveRankingToCloud(currentUser, updated).catch(() => showToast("Erreur d'enregistrement"));
   if (viewingUser === currentUser) renderRanked();
   showToast(`${movie.title} ajouté en position ${updated.length}`);
+  setTimeout(() => announceChallengeProgress(progressSnapshot), 500);
 }
 
 function openRatingSheet(movie, origin = null, recoDocId = null) {
@@ -2586,6 +2657,7 @@ function closeRatingSheet() {
 
 async function addToWatched(movie, rating) {
   if (!currentUser || !movie) return;
+  const progressSnapshot = activeChallengeProgressSnapshot();
   const list = myWatched();
   const watchedMovie = { ...simplifyMovie(movie), watchedAt: Date.now(), rating };
   const existingIndex = list.findIndex(m => m.id === movie.id);
@@ -2624,6 +2696,7 @@ async function addToWatched(movie, rating) {
       // ensureChallengeMetadata will retry without losing the rating.
     }
   }
+  announceChallengeProgress(progressSnapshot);
 }
 
 function removeFromWatched(movieId) {
@@ -2780,13 +2853,14 @@ function closeMovieActionSheet() {
 function closeOverlayElement(overlay) {
   if (!overlay) return;
   const closers = {
-    "context-overlay": closeContextMenu,
     "recommend-overlay": closeRecommendSheet,
     "movie-action-overlay": closeMovieActionSheet,
     "install-overlay": closeInstallSheet,
     "settings-overlay": closeSettingsSheet,
     "cinema-challenges-overlay": closeChallengesSheet,
     "badge-movies-overlay": closeBadgeMoviesSheet,
+    "badge-unlock-overlay": closeBadgeUnlockSheet,
+    "confirm-overlay": closeConfirmSheet,
     "rating-overlay": closeRatingSheet
   };
   (closers[overlay.id] || (() => overlay.classList.remove("show")))();
@@ -3275,6 +3349,42 @@ function notificationIconName() {
   return ("Notification" in window && Notification.permission === "granted") ? "bell" : "bell-off";
 }
 
+function openConfirmSheet({ title, message, confirmLabel = "Confirmer", danger = false, onConfirm }) {
+  const overlay = document.getElementById("confirm-overlay");
+  if (!overlay) return;
+  pendingConfirmAction = typeof onConfirm === "function" ? onConfirm : null;
+  overlay.classList.toggle("is-danger", danger);
+  document.getElementById("confirm-icon").innerHTML = surfaceIconHtml(danger ? "trash" : "check", "confirm-dialog-icon");
+  document.getElementById("confirm-title").textContent = title;
+  document.getElementById("confirm-message").textContent = message;
+  document.getElementById("btn-confirm-action").textContent = confirmLabel;
+  overlay.classList.add("show");
+  scheduleScrollLockUpdate();
+}
+
+function closeConfirmSheet() {
+  document.getElementById("confirm-overlay")?.classList.remove("show");
+  pendingConfirmAction = null;
+  scheduleScrollLockUpdate();
+}
+
+async function runConfirmedAction() {
+  const action = pendingConfirmAction;
+  const button = document.getElementById("btn-confirm-action");
+  if (!action || button?.disabled) return;
+  if (button) button.disabled = true;
+  document.getElementById("confirm-overlay")?.classList.remove("show");
+  pendingConfirmAction = null;
+  scheduleScrollLockUpdate();
+  try {
+    await action();
+  } catch (e) {
+    showToast("Action impossible pour le moment");
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 function renderSettingsSheetContent() {
   const me = profileById(currentUser) || fallbackProfile(currentUser);
   const topCount = myRanked().length;
@@ -3356,11 +3466,6 @@ async function deleteUserRecos(userId) {
 async function deleteCurrentAccount() {
   if (!currentUser) return;
   const userId = currentUser;
-  const me = profileById(userId) || fallbackProfile(userId);
-  if (!confirm(`Supprimer le compte ${me.name} ? Tout son Top, ses films vus, sa liste À voir et ses recos seront supprimés.`)) {
-    showToast("Suppression annulée");
-    return;
-  }
 
   forgetLocalProfile(userId);
   delete allRankings[userId];
@@ -3406,16 +3511,29 @@ async function handleSettingsAction(action) {
     closeSettingsSheet();
     openInstallSheet();
   } else if (action === "reset-top") {
-    if (confirm("Vider ton Top ? Tes films vus et À voir restent gardés.")) {
+    openConfirmSheet({
+      title: "Vider ton Top ?",
+      message: "Tes films vus et ta liste À voir resteront intacts.",
+      confirmLabel: "Vider le Top",
+      danger: true,
+      onConfirm: async () => {
       await saveRankingToCloud(currentUser, []).catch(() => showToast("Erreur d'enregistrement"));
       closeSettingsSheet();
       showToast("Top vidé");
       renderPage();
-    }
+      }
+    });
   } else if (action === "logout") {
     logoutCurrentUser();
   } else if (action === "delete-account") {
-    await deleteCurrentAccount();
+    const me = profileById(currentUser) || fallbackProfile(currentUser);
+    openConfirmSheet({
+      title: `Supprimer ${me.name} ?`,
+      message: "Son Top, ses films vus, sa liste À voir et ses recommandations seront supprimés définitivement.",
+      confirmLabel: "Supprimer le compte",
+      danger: true,
+      onConfirm: deleteCurrentAccount
+    });
   }
 }
 
@@ -3624,22 +3742,6 @@ function openInstallSheet() {
 }
 function closeInstallSheet() {
   document.getElementById("install-overlay").classList.remove("show");
-}
-
-function openContextMenu(index) {
-  const movie = myRanked()[index];
-  if (!movie) return;
-  activeContextIndex = index;
-  const poster = movie.poster_path ? TMDB_IMG + movie.poster_path : "";
-  document.getElementById("context-preview").innerHTML = `
-    ${poster ? `<img src="${poster}" alt="">` : ""}
-    <div class="context-preview-title">${escapeHtml(movie.title)}</div>
-  `;
-  document.getElementById("context-overlay").classList.add("show");
-}
-function closeContextMenu() {
-  document.getElementById("context-overlay").classList.remove("show");
-  activeContextIndex = null;
 }
 
 async function ensureGenreData() {
@@ -4317,9 +4419,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }, 3500);
 
-  document.getElementById("context-overlay").addEventListener("click", (e) => {
-    if (e.target.id === "context-overlay") closeContextMenu();
-  });
   document.getElementById("recommend-overlay").addEventListener("click", (e) => {
     if (e.target.id === "recommend-overlay") closeRecommendSheet();
   });
@@ -4342,6 +4441,16 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target.id === "badge-movies-overlay") closeBadgeMoviesSheet();
   });
   document.getElementById("btn-close-badge-movies").addEventListener("click", closeBadgeMoviesSheet);
+  document.getElementById("badge-unlock-overlay").addEventListener("click", (e) => {
+    if (e.target.id === "badge-unlock-overlay") closeBadgeUnlockSheet();
+  });
+  document.getElementById("btn-close-badge-unlock").addEventListener("click", closeBadgeUnlockSheet);
+  document.getElementById("btn-view-unlocked-badge").addEventListener("click", viewUnlockedBadge);
+  document.getElementById("confirm-overlay").addEventListener("click", (e) => {
+    if (e.target.id === "confirm-overlay") closeConfirmSheet();
+  });
+  document.getElementById("btn-cancel-confirm").addEventListener("click", closeConfirmSheet);
+  document.getElementById("btn-confirm-action").addEventListener("click", runConfirmedAction);
   document.getElementById("rating-overlay").addEventListener("click", (e) => {
     if (e.target.id === "rating-overlay") closeRatingSheet();
   });
@@ -4355,45 +4464,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const topOverlay = openOverlays[openOverlays.length - 1];
     if (topOverlay) closeOverlayElement(topOverlay);
   });
-  document.querySelectorAll(".context-item").forEach(item => {
-    item.addEventListener("click", () => {
-      if (activeContextIndex === null) return;
-      const action = item.dataset.action;
-      const i = activeContextIndex;
-      const list = [...myRanked()];
-      if (i < 0 || i >= list.length) {
-        closeContextMenu();
-        return;
-      }
-
-      if (action === "top" && i !== 0) {
-        const [movie] = list.splice(i, 1);
-        list.unshift(movie);
-        saveRankingToCloud(currentUser, list).catch(() => showToast("Erreur d'enregistrement"));
-        renderRanked();
-        setTimeout(() => {
-          const firstBadge = document.querySelector('.rank-card[data-pos="1"] .rank-badge');
-          if (firstBadge) fireConfetti(firstBadge);
-        }, 80);
-        showToast(`${movie.title} en N°1 🏆`);
-      } else if (action === "up" && i > 0) {
-        [list[i-1], list[i]] = [list[i], list[i-1]];
-        saveRankingToCloud(currentUser, list).catch(() => showToast("Erreur d'enregistrement"));
-        renderRanked();
-      } else if (action === "down" && i < list.length - 1) {
-        [list[i+1], list[i]] = [list[i], list[i+1]];
-        saveRankingToCloud(currentUser, list).catch(() => showToast("Erreur d'enregistrement"));
-        renderRanked();
-      } else if (action === "remove") {
-        const [movie] = list.splice(i, 1);
-        saveRankingToCloud(currentUser, list).catch(() => showToast("Erreur d'enregistrement"));
-        renderRanked();
-        showToast(`${movie.title} retiré`);
-      }
-      closeContextMenu();
-    });
-  });
-
   listenProfiles((list, metadata) => {
     PROFILES = list;
     const serverConfirmed = !metadata.fromCache && !metadata.failed;
@@ -4570,6 +4640,16 @@ body.no-page-scroll #root {
 
 /* ═══════════════ NOTIFICATION BANNER ═══════════════ */
 .reco-banner-zone { padding: 14px 20px 0; display: flex; flex-direction: column; gap: 10px; }
+.reco-inbox-heading {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 0 2px 2px;
+}
+.reco-inbox-heading div { min-width: 0; }
+.reco-inbox-heading strong { display: block; font-size: 13px; font-weight: 800; }
+.reco-inbox-heading span { display: block; margin-top: 2px; color: var(--ink-soft); font-size: 9.5px; font-weight: 700; }
+.reco-inbox-heading button {
+  flex: 0 0 auto; border: none; background: transparent; color: var(--lav-deep); padding: 6px 0 2px;
+  font: 800 10.5px 'Plus Jakarta Sans', sans-serif;
+}
 .reco-banner {
   background: linear-gradient(120deg, var(--gold), var(--pink));
   border-radius: 18px; padding: 12px 14px; display: flex; align-items: center; gap: 12px;
@@ -4592,6 +4672,21 @@ body.no-page-scroll #root {
 .reco-banner-action.soft {
   background: rgba(255,255,255,0.34); color: rgba(45,42,61,0.7);
 }
+.reco-inbox-more {
+  width: 100%; min-height: 58px; border: none; border-radius: 16px; padding: 10px 12px;
+  display: flex; align-items: center; gap: 10px; text-align: left; color: var(--ink); background: rgba(255,255,255,.62);
+  box-shadow: inset 3px 3px 7px var(--shadow-d), inset -3px -3px 7px var(--shadow-l);
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+.reco-inbox-more:active { transform: scale(.98); }
+.reco-inbox-more-icon {
+  width: 34px; height: 34px; flex: 0 0 34px; border-radius: 11px; display: grid; place-items: center;
+  color: var(--lav-deep); background: var(--bg);
+}
+.reco-inbox-more-icon .tab-svg { width: 18px; height: 18px; }
+.reco-inbox-more span { min-width: 0; }
+.reco-inbox-more strong { display: block; font-size: 11px; font-weight: 800; }
+.reco-inbox-more small { display: block; margin-top: 2px; color: var(--ink-soft); font-size: 9px; font-weight: 700; }
 
 /* ═══════════════ RECOMMEND BUTTONS ═══════════════ */
 .poster-pick-recommend {
@@ -4644,8 +4739,8 @@ body.no-page-scroll #root {
   pointer-events: none;
 }
 .app-tabbar {
-  margin: 0 auto; width: min(620px, 100%); height: 82px; display: flex; align-items: stretch;
-  padding: 7px 5px 13px; border-radius: 25px 25px 34px 34px; background: rgba(255,255,255,0.94);
+  margin: 0 auto; width: min(620px, 100%); height: 78px; display: flex; align-items: stretch;
+  padding: 7px 5px 11px; border-radius: 25px 25px 34px 34px; background: rgba(255,255,255,0.94);
   box-shadow: 8px 8px 22px var(--shadow-d), -8px -8px 22px var(--shadow-l);
   backdrop-filter: blur(18px) saturate(1.25); position: relative; pointer-events: auto;
   user-select: none;
@@ -4655,12 +4750,12 @@ body.no-page-scroll #root {
   transform: translateX(-50%); border-radius: 999px; background: rgba(199,194,221,0.25);
 }
 .app-tab-item {
-  all: unset; flex: 1 1 0; min-width: 0; height: 58px; display: flex; flex-direction: column;
-  align-items: center; justify-content: flex-start; gap: 2px; color: #BCC2C9; position: relative;
-  border-radius: 16px; cursor: pointer; transition: color .28s ease, transform .28s cubic-bezier(.2,.8,.2,1);
+  all: unset; flex: .78 1 0; min-width: 0; height: 56px; display: flex;
+  align-items: center; justify-content: center; gap: 0; color: #BCC2C9; position: relative;
+  border-radius: 16px; cursor: pointer; transition: flex-grow .34s cubic-bezier(.2,.8,.2,1), color .28s ease, transform .28s cubic-bezier(.2,.8,.2,1);
 }
 .app-tab-item::before {
-  content: ""; position: absolute; left: 50%; top: 1px; width: 40px; height: 34px; border-radius: 13px;
+  content: ""; position: absolute; left: 50%; top: 8px; width: 38px; height: 38px; border-radius: 14px;
   background: #FDECEF; background: color-mix(in srgb, var(--tab-color) 28%, white); opacity: 0;
   transform: translateX(-50%) scale(.7); transform-origin: center; transition: transform .36s cubic-bezier(.34,1.56,.64,1), opacity .22s;
 }
@@ -4669,21 +4764,27 @@ body.no-page-scroll #root {
   border-radius: 999px; background: currentColor; transform: translateX(-50%) scaleX(0);
   transition: transform .32s cubic-bezier(.2,.8,.2,1);
 }
-.app-tab-item.active { color: var(--lav-deep); color: color-mix(in srgb, var(--tab-color) 68%, var(--lav-deep)); }
-.app-tab-item.active::before { opacity: 1; transform: translateX(-50%) scale(1); }
+.app-tab-item.active {
+  flex-grow: 1.72; gap: 3px; color: var(--lav-deep); color: color-mix(in srgb, var(--tab-color) 68%, var(--lav-deep));
+}
+.app-tab-item.active::before { width: calc(100% - 8px); max-width: 112px; opacity: 1; transform: translateX(-50%) scale(1); }
 .app-tab-item.active::after { transform: translateX(-50%) scaleX(1); }
 .app-tab-icon {
-  width: 40px; height: 36px; display: grid; place-items: center;
+  width: 38px; height: 38px; flex: 0 0 38px; display: grid; place-items: center;
   position: relative; z-index: 1; transition: transform .32s cubic-bezier(.2,.8,.2,1);
 }
-.app-tab-item.active .app-tab-icon { transform: translateY(-1px); }
+.app-tab-item.active .app-tab-icon { transform: none; }
+.app-tab-item.active .app-tab-icon { width: 34px; flex-basis: 34px; }
 .app-tab-text {
-  position: relative; z-index: 1; width: 100%; padding: 0 1px; color: currentColor;
-  font-size: clamp(8px, 2.25vw, 10px); font-weight: 750; letter-spacing: 0;
-  transform: none; opacity: .74; transition: opacity .24s ease, color .24s ease;
-  white-space: nowrap; line-height: 1.15; text-align: center; overflow: visible;
+  position: relative; z-index: 1; display: none; min-width: 0; width: auto; padding-right: 2px; color: currentColor;
+  font-size: 10.5px; font-weight: 800; letter-spacing: 0; white-space: nowrap; line-height: 1.1;
 }
-.app-tab-text.active { transform: none; opacity: 1; }
+.app-tab-text.active { display: block; animation: tab-label-in .26s ease both; }
+@keyframes tab-label-in { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
+@media (max-width: 350px) {
+  .app-tab-item.active { flex-grow: 2.35; }
+  .app-tab-icon { width: 34px; flex-basis: 34px; }
+}
 .tab-svg { width: 24px; height: 24px; display: block; }
 .app-tab-item.active[data-tab="search"] .tab-search-circle { animation: tab-search-pulse 0.7s ease; }
 .app-tab-item.active[data-tab="search"] .tab-search-line { animation: tab-search-line 0.7s ease; transform-origin: 17px 17px; }
@@ -4756,30 +4857,6 @@ body.no-page-scroll #root {
 .search-clear[hidden] { display: none; }
 .search-clear .tab-svg { width: 17px; height: 17px; }
 .search-clear:active { transform: scale(.9); }
-
-.quick-home-grid {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-  width: calc(100% - 40px); max-width: 980px; gap: 12px; margin: 0 auto; padding: 12px 0 2px;
-}
-.quick-home-card {
-  border: none; background: var(--card); border-radius: 18px; padding: 14px;
-  display: grid; grid-template-columns: 38px 1fr; column-gap: 10px; row-gap: 2px;
-  align-items: center; text-align: left; font-family: 'Plus Jakarta Sans', sans-serif;
-  box-shadow: 5px 5px 14px var(--shadow-d), -5px -5px 14px var(--shadow-l);
-  color: var(--ink); cursor: pointer; transition: transform 0.12s cubic-bezier(.34,1.56,.64,1), box-shadow 0.12s;
-}
-.quick-home-card:active {
-  transform: scale(0.96);
-  box-shadow: inset 4px 4px 9px var(--shadow-d), inset -4px -4px 9px var(--shadow-l);
-}
-.quick-home-icon {
-  grid-row: 1 / span 2; width: 38px; height: 38px; border-radius: 14px;
-  display: flex; align-items: center; justify-content: center; color: var(--lav-deep);
-  background: var(--bg); box-shadow: inset 3px 3px 7px var(--shadow-d), inset -3px -3px 7px var(--shadow-l);
-}
-.quick-home-icon .tab-svg { width: 22px; height: 22px; }
-.quick-home-card strong { font-size: 14px; font-weight: 800; line-height: 1.1; }
-.quick-home-card small { color: var(--ink-soft); font-size: 10px; font-weight: 700; line-height: 1.15; }
 
 .cinema-challenge-section { width: calc(100% - 40px); max-width: 980px; margin: 24px auto 4px; }
 .cinema-challenge-heading {
@@ -5322,6 +5399,38 @@ body.no-page-scroll #root {
 .movie-action-copy small { display: block; margin-top: 2px; color: var(--ink-soft); font-size: 9.5px; font-weight: 700; }
 .context-divider { height: 1px; background: rgba(0,0,0,0.06); margin: 4px 8px; }
 .context-empty { padding: 12px; color: var(--ink-soft); font-size: 13px; font-weight: 700; text-align: center; }
+.badge-unlock-overlay { background: rgba(45,42,61,.42); backdrop-filter: blur(8px); }
+.badge-unlock-sheet { padding-left: 22px; padding-right: 22px; text-align: center; overflow: visible; }
+.badge-unlock-kicker {
+  color: var(--lav-deep); font: 800 10px 'DM Mono', monospace; text-transform: uppercase; letter-spacing: .8px;
+}
+.badge-unlock-art { width: 132px; height: 132px; margin: 4px auto 8px; animation: badge-unlock-pop .55s cubic-bezier(.2,.9,.2,1.35); }
+.badge-unlock-art > * { width: 100%; height: 100%; }
+@keyframes badge-unlock-pop { from { opacity: 0; transform: translateY(18px) scale(.55) rotate(-6deg); } to { opacity: 1; transform: none; } }
+.badge-unlock-sheet h2 { margin: 0; color: var(--ink); font-size: 24px; font-weight: 800; line-height: 1.15; }
+.badge-unlock-sheet p { max-width: 330px; margin: 7px auto 12px; color: var(--ink-soft); font-size: 12px; font-weight: 650; line-height: 1.5; }
+.badge-unlock-reward {
+  width: fit-content; margin: 0 auto 18px; padding: 7px 11px; border-radius: 999px; display: flex; align-items: center; gap: 6px;
+  color: #287963; background: rgba(142,215,199,.2); font-size: 10px; font-weight: 800;
+}
+.badge-unlock-check { width: 18px; height: 18px; display: grid; place-items: center; }
+.badge-unlock-check .tab-svg { width: 15px; height: 15px; }
+.badge-unlock-actions { display: grid; grid-template-columns: minmax(0,1.35fr) minmax(0,1fr); gap: 8px; }
+.badge-unlock-actions .btn-primary, .badge-unlock-actions .btn-secondary { min-height: 48px; }
+
+.confirm-overlay { background: rgba(45,42,61,.34); backdrop-filter: blur(7px); }
+.confirm-sheet { padding-left: 22px; padding-right: 22px; text-align: center; }
+.confirm-dialog-icon {
+  width: 54px; height: 54px; margin: 3px auto 12px; border-radius: 18px; display: grid; place-items: center;
+  color: var(--lav-deep); background: var(--bg); box-shadow: inset 3px 3px 8px var(--shadow-d), inset -3px -3px 8px var(--shadow-l);
+}
+.confirm-dialog-icon .tab-svg { width: 25px; height: 25px; }
+.confirm-overlay.is-danger .confirm-dialog-icon { color: #d64668; background: rgba(255,229,236,.72); }
+.confirm-sheet h2 { margin: 0; font-size: 20px; font-weight: 800; }
+.confirm-sheet p { max-width: 360px; margin: 8px auto 20px; color: var(--ink-soft); font-size: 12px; font-weight: 650; line-height: 1.55; }
+.confirm-actions { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.25fr); gap: 8px; }
+.confirm-actions .btn-primary, .confirm-actions .btn-secondary { min-height: 48px; }
+.confirm-overlay.is-danger #btn-confirm-action { background: #d64668; }
 .install-title { font-weight: 800; font-size: 18px; padding: 4px 10px 6px; }
 .install-logo {
   width: 76px; height: 76px; border-radius: 19px; object-fit: cover; display: block; margin: 2px auto 12px;
@@ -5410,6 +5519,7 @@ body:has(.app-tabbar-wrap) .toast { bottom: calc(env(safe-area-inset-bottom, 0px
 .modal-error { color: #d64668; font-size: 12px; margin-bottom: 12px; font-weight: 600; display: none; }
 .btn-primary { width: 100%; background: var(--lav); color: white; border: none; padding: 15px; border-radius: 16px; font-weight: 700; font-size: 15px; cursor: pointer; transition: transform 0.12s; font-family: 'Plus Jakarta Sans', sans-serif; }
 .btn-primary:active { transform: scale(0.96); }
+.btn-primary:disabled { opacity: .55; cursor: wait; }
 
 :where(button, input, [tabindex]):focus-visible {
   outline: 3px solid rgba(111,78,187,.38);
@@ -5417,7 +5527,6 @@ body:has(.app-tabbar-wrap) .toast { bottom: calc(env(safe-area-inset-bottom, 0px
 }
 
 @media (min-width: 700px) {
-  .quick-home-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .search-results, .skeleton-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .context-sheet { margin-bottom: 12px; border-radius: 24px; }
   .collection-intro { padding-top: 30px; }
@@ -5451,18 +5560,6 @@ body:has(.app-tabbar-wrap) .toast { bottom: calc(env(safe-area-inset-bottom, 0px
 <body>
 <div id="root"></div>
 
-<div class="context-overlay" id="context-overlay" aria-hidden="true">
-  <div class="context-sheet" id="context-sheet" role="dialog" aria-modal="true" aria-label="Modifier le classement">
-    <button class="context-handle" type="button" aria-label="Fermer"></button>
-    <div class="context-preview" id="context-preview"></div>
-    <div class="context-item" data-action="top"><span class="ic">🏆</span> Mettre en N°1</div>
-    <div class="context-item" data-action="up"><span class="ic">⬆️</span> Monter d'une place</div>
-    <div class="context-item" data-action="down"><span class="ic">⬇️</span> Descendre d'une place</div>
-    <div class="context-divider"></div>
-    <div class="context-item danger" data-action="remove"><span class="ic">🗑️</span> Retirer du classement</div>
-  </div>
-</div>
-
 <div class="context-overlay" id="recommend-overlay" aria-hidden="true">
   <div class="context-sheet" role="dialog" aria-modal="true" aria-label="Recommander le film">
     <button class="context-handle" type="button" aria-label="Fermer"></button>
@@ -5482,7 +5579,7 @@ body:has(.app-tabbar-wrap) .toast { bottom: calc(env(safe-area-inset-bottom, 0px
 <div class="context-overlay" id="install-overlay" aria-hidden="true">
   <div class="context-sheet" role="dialog" aria-modal="true" aria-labelledby="install-title">
     <button class="context-handle" type="button" aria-label="Fermer"></button>
-    <img class="install-logo" src="./letop-icon-192.png?v=20260706-tabbar-v8" alt="Le Top">
+    <img class="install-logo" src="./letop-icon-192.png?v=20260706-product-loop-v9" alt="Le Top">
     <div class="install-title" id="install-title">Installer Le Top</div>
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
@@ -5521,6 +5618,30 @@ body:has(.app-tabbar-wrap) .toast { bottom: calc(env(safe-area-inset-bottom, 0px
     <div class="badge-movies-section-title">Films associés</div>
     <div id="badge-movies-list"></div>
     <button class="btn-secondary" id="btn-close-badge-movies" type="button">Fermer</button>
+  </div>
+</div>
+
+<div class="context-overlay badge-unlock-overlay" id="badge-unlock-overlay" aria-hidden="true">
+  <div class="context-sheet badge-unlock-sheet" role="dialog" aria-modal="true" aria-labelledby="badge-unlock-title">
+    <button class="context-handle" type="button" aria-label="Fermer"></button>
+    <div id="badge-unlock-content"></div>
+    <div class="badge-unlock-actions">
+      <button class="btn-primary" id="btn-view-unlocked-badge" type="button">Voir les films</button>
+      <button class="btn-secondary" id="btn-close-badge-unlock" type="button">Continuer</button>
+    </div>
+  </div>
+</div>
+
+<div class="context-overlay confirm-overlay" id="confirm-overlay" aria-hidden="true">
+  <div class="context-sheet confirm-sheet" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+    <button class="context-handle" type="button" aria-label="Fermer"></button>
+    <div id="confirm-icon"></div>
+    <h2 id="confirm-title"></h2>
+    <p id="confirm-message"></p>
+    <div class="confirm-actions">
+      <button class="btn-secondary" id="btn-cancel-confirm" type="button">Annuler</button>
+      <button class="btn-primary" id="btn-confirm-action" type="button">Confirmer</button>
+    </div>
   </div>
 </div>
 
