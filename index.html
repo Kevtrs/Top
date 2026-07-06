@@ -9,9 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Le Top 🍿</title>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260705-premium-ux-v7">
-<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260705-premium-ux-v7">
-<link rel="manifest" href="./site.webmanifest?v=20260705-premium-ux-v7">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260706-tabbar-v8">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260706-tabbar-v8">
+<link rel="manifest" href="./site.webmanifest?v=20260706-tabbar-v8">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -40,7 +40,7 @@ const TMDB_BACKDROP = "https://image.tmdb.org/t/p/w500";
 const TMDB_PROFILE = "https://image.tmdb.org/t/p/w185";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260705-premium-ux-v7";
+const PWA_VERSION = "20260706-tabbar-v8";
 const APP_PUBLIC_URL = "https://kevtrs.github.io/Top/";
 
 const APP_TABS = [
@@ -2264,18 +2264,8 @@ function attachGlobalSearch() {
   attachSearchControls(input, box, zone, runGlobalSearch);
 }
 
-function setupTabBarAnimation() {
-  const items = document.querySelectorAll(".app-tab-item");
-  items.forEach(item => {
-    const text = item.querySelector(".app-tab-text");
-    if (!text) return;
-    item.style.setProperty("--lineWidth", `${text.offsetWidth}px`);
-  });
-}
-
 function attachAppEvents() {
   document.getElementById("btn-settings")?.addEventListener("click", openSettingsSheet);
-  setupTabBarAnimation();
 
   document.querySelectorAll(".app-tab-item").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -4650,54 +4640,51 @@ body.no-page-scroll #root {
 
 .app-tabbar-wrap {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 350;
-  padding: 0 10px calc(env(safe-area-inset-bottom, 0px) + 8px);
+  padding: 0 12px calc(env(safe-area-inset-bottom, 0px) + 8px);
   pointer-events: none;
 }
 .app-tabbar {
-  margin: 0 auto; width: min(54em, 100%); height: 8.6em; display: flex; align-items: center;
-  padding: 0 1.7em 2.2em; border-radius: 2.2em 2.2em 4.2em 4.2em; background: rgba(255,255,255,0.94);
+  margin: 0 auto; width: min(620px, 100%); height: 82px; display: flex; align-items: stretch;
+  padding: 7px 5px 13px; border-radius: 25px 25px 34px 34px; background: rgba(255,255,255,0.94);
   box-shadow: 8px 8px 22px var(--shadow-d), -8px -8px 22px var(--shadow-l);
   backdrop-filter: blur(18px) saturate(1.25); position: relative; pointer-events: auto;
-  font-size: clamp(8px, 2.25vw, 10px); user-select: none;
+  user-select: none;
 }
 .app-tabbar::after {
-  content: ""; position: absolute; left: 50%; bottom: 1.05em; width: 35%; height: .48em;
+  content: ""; position: absolute; left: 50%; bottom: 5px; width: 30%; max-width: 150px; height: 4px;
   transform: translateX(-50%); border-radius: 999px; background: rgba(199,194,221,0.25);
 }
 .app-tab-item {
-  all: unset; flex-grow: 1; min-width: 0; height: 5.4em; display: flex; align-items: center; justify-content: center;
-  color: #CDD2D7; position: relative; overflow: hidden; border-radius: 18px; cursor: pointer;
-  transition: flex-grow 0.45s cubic-bezier(0.4,0,0.2,1), color 0.35s cubic-bezier(0.4,0,0.2,1);
+  all: unset; flex: 1 1 0; min-width: 0; height: 58px; display: flex; flex-direction: column;
+  align-items: center; justify-content: flex-start; gap: 2px; color: #BCC2C9; position: relative;
+  border-radius: 16px; cursor: pointer; transition: color .28s ease, transform .28s cubic-bezier(.2,.8,.2,1);
 }
 .app-tab-item::before {
-  content: ""; position: absolute; left: 2.15em; top: 50%; width: 1.75em; height: 1.75em; border-radius: 50%;
+  content: ""; position: absolute; left: 50%; top: 1px; width: 40px; height: 34px; border-radius: 13px;
   background: #FDECEF; background: color-mix(in srgb, var(--tab-color) 28%, white); opacity: 0;
-  transform: translateY(-50%) scale(0); transform-origin: center; transition: transform 0.45s cubic-bezier(.34,1.56,.64,1), opacity 0.25s;
+  transform: translateX(-50%) scale(.7); transform-origin: center; transition: transform .36s cubic-bezier(.34,1.56,.64,1), opacity .22s;
 }
 .app-tab-item::after {
-  content: ""; position: absolute; left: 4.85em; bottom: .2em; width: calc(var(--lineWidth, 3em) + .5em); height: .25em;
-  border-radius: 2em; background: currentColor; transform: scaleX(0); transform-origin: left center;
-  transition: transform 0.45s cubic-bezier(0.4,0,0.2,1);
+  content: ""; position: absolute; left: 50%; bottom: 0; width: 18px; height: 3px;
+  border-radius: 999px; background: currentColor; transform: translateX(-50%) scaleX(0);
+  transition: transform .32s cubic-bezier(.2,.8,.2,1);
 }
-.app-tab-item.active { flex: 0 0 16.2em; min-width: 16.2em; color: var(--lav-deep); color: color-mix(in srgb, var(--tab-color) 70%, var(--lav-deep)); }
-.app-tab-item.active::before { opacity: 1; transform: translateY(-50%) scale(1); }
-.app-tab-item.active::after { transform: scaleX(1); }
+.app-tab-item.active { color: var(--lav-deep); color: color-mix(in srgb, var(--tab-color) 68%, var(--lav-deep)); }
+.app-tab-item.active::before { opacity: 1; transform: translateX(-50%) scale(1); }
+.app-tab-item.active::after { transform: translateX(-50%) scaleX(1); }
 .app-tab-icon {
-  font-size: 1.05em; width: 3.1em; height: 3.1em; display: grid; place-items: center;
-  position: relative; z-index: 1; transition: transform 0.45s cubic-bezier(0.4,0,0.2,1);
+  width: 40px; height: 36px; display: grid; place-items: center;
+  position: relative; z-index: 1; transition: transform .32s cubic-bezier(.2,.8,.2,1);
 }
-.app-tab-item.active .app-tab-icon {
-  position: absolute; left: 1.45em; top: 50%;
-  transform: translateY(-50%);
-}
+.app-tab-item.active .app-tab-icon { transform: translateY(-1px); }
 .app-tab-text {
-  position: absolute; left: 4.85em; top: 50%; max-width: calc(100% - 5.2em);
-  font-size: 1.22em; font-weight: 800; letter-spacing: 0;
-  transform: translate3d(0,120%,0); opacity: 0; transition: transform 0.16s ease, opacity 0.12s ease;
-  white-space: nowrap; line-height: 1; overflow: hidden;
+  position: relative; z-index: 1; width: 100%; padding: 0 1px; color: currentColor;
+  font-size: clamp(8px, 2.25vw, 10px); font-weight: 750; letter-spacing: 0;
+  transform: none; opacity: .74; transition: opacity .24s ease, color .24s ease;
+  white-space: nowrap; line-height: 1.15; text-align: center; overflow: visible;
 }
-.app-tab-text.active { transform: translate3d(0,-50%,0); opacity: 1; transition: transform 0.3s ease 0.1s, opacity 0.2s ease 0.1s; }
-.tab-svg { width: 2.55em; height: 2.55em; display: block; }
+.app-tab-text.active { transform: none; opacity: 1; }
+.tab-svg { width: 24px; height: 24px; display: block; }
 .app-tab-item.active[data-tab="search"] .tab-search-circle { animation: tab-search-pulse 0.7s ease; }
 .app-tab-item.active[data-tab="search"] .tab-search-line { animation: tab-search-line 0.7s ease; transform-origin: 17px 17px; }
 .app-tab-item.active[data-tab="top"] .tab-svg { animation: tab-crown-pop 0.7s cubic-bezier(.34,1.56,.64,1); }
@@ -5495,7 +5482,7 @@ body:has(.app-tabbar-wrap) .toast { bottom: calc(env(safe-area-inset-bottom, 0px
 <div class="context-overlay" id="install-overlay" aria-hidden="true">
   <div class="context-sheet" role="dialog" aria-modal="true" aria-labelledby="install-title">
     <button class="context-handle" type="button" aria-label="Fermer"></button>
-    <img class="install-logo" src="./letop-icon-192.png?v=20260705-premium-ux-v7" alt="Le Top">
+    <img class="install-logo" src="./letop-icon-192.png?v=20260706-tabbar-v8" alt="Le Top">
     <div class="install-title" id="install-title">Installer Le Top</div>
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
