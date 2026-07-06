@@ -727,28 +727,58 @@ async function getMovieDetails(id) {
 function watchProvidersFromDetails(details, country = "FR") {
   return details?.["watch/providers"]?.results?.[country] || null;
 }
-function watchProvidersHtml(providers) {
-  const logo = p => `<img class="watch-provider-logo" src="https://image.tmdb.org/t/p/w92${p.logo_path}" alt="${escapeAttr(p.provider_name)}" title="${escapeAttr(p.provider_name)}" loading="lazy">`;
-  const flatrate = providers?.flatrate || [];
-  const rent = providers?.rent || [];
-  const buy = providers?.buy || [];
-  let label = "";
-  let list = [];
-  if (flatrate.length) { label = "En streaming sur"; list = flatrate; }
-  else if (rent.length) { label = "À la location sur"; list = rent; }
-  else if (buy.length) { label = "À l'achat sur"; list = buy; }
-  if (!list.length) {
+const MAJOR_WATCH_PROVIDERS = [
+  "Netflix", "Amazon Prime Video", "Disney Plus", "Canal+", "Apple TV",
+  "Paramount Plus", "Max", "OCS", "ARTE", "YouTube"
+];
+function watchProviderPriorityRank(name) {
+  const idx = MAJOR_WATCH_PROVIDERS.findIndex(major => name.toLowerCase().includes(major.toLowerCase()));
+  return idx === -1 ? MAJOR_WATCH_PROVIDERS.length : idx;
+}
+function sortWatchProviders(list) {
+  return [...list].sort((a, b) => watchProviderPriorityRank(a.provider_name) - watchProviderPriorityRank(b.provider_name)
+    || (a.display_priority ?? 0) - (b.display_priority ?? 0));
+}
+function watchProvidersHtml(providers, movieTitle = "") {
+  const tile = (p, tag) => `
+    <div class="watch-provider-tile">
+      <img class="watch-provider-logo" src="https://image.tmdb.org/t/p/w92${p.logo_path}" alt="${escapeAttr(p.provider_name)}" title="${escapeAttr(p.provider_name)}" loading="lazy">
+      ${tag ? `<span class="watch-provider-tag">${escapeHtml(tag)}</span>` : ""}
+    </div>`;
+
+  const included = sortWatchProviders([...(providers?.flatrate || []), ...(providers?.ads || [])]);
+  const includedIds = new Set(included.map(p => p.provider_id));
+
+  const rentBuyMap = new Map();
+  (providers?.rent || []).forEach(p => {
+    if (includedIds.has(p.provider_id)) return;
+    rentBuyMap.set(p.provider_id, { ...p, tags: new Set(["Location"]) });
+  });
+  (providers?.buy || []).forEach(p => {
+    if (includedIds.has(p.provider_id)) return;
+    const existing = rentBuyMap.get(p.provider_id);
+    if (existing) existing.tags.add("Achat");
+    else rentBuyMap.set(p.provider_id, { ...p, tags: new Set(["Achat"]) });
+  });
+  const rentAndBuy = sortWatchProviders([...rentBuyMap.values()]);
+
+  if (!included.length && !rentAndBuy.length) {
     return `
       <div class="movie-detail-box">
         <div class="movie-detail-label">Où le regarder</div>
         <p>Non disponible en streaming pour l'instant.</p>
       </div>`;
   }
+
+  const priceLink = `https://www.justwatch.com/fr/recherche?q=${encodeURIComponent(movieTitle)}`;
   return `
     <div class="movie-detail-box">
       <div class="movie-detail-label">Où le regarder</div>
-      <div class="watch-provider-row">${list.map(logo).join("")}</div>
-      <p class="watch-provider-meta">${escapeHtml(label)} · via JustWatch</p>
+      <div class="watch-provider-row">
+        ${included.map(p => tile(p, "")).join("")}
+        ${rentAndBuy.map(p => tile(p, [...p.tags].join(" / "))).join("")}
+      </div>
+      ${rentAndBuy.length ? `<a class="watch-provider-link" href="${escapeAttr(priceLink)}" target="_blank" rel="noopener noreferrer">Voir les prix</a>` : ""}
     </div>`;
 }
 async function getSagaMovieResult(id) {
@@ -2911,10 +2941,10 @@ async function loadTonightPickProviders(movie) {
   try {
     const details = await getMovieDetails(movie.id);
     if (!document.body.contains(zone) || tonightPickMovie?.id !== movie.id) return;
-    zone.outerHTML = watchProvidersHtml(watchProvidersFromDetails(details));
+    zone.outerHTML = watchProvidersHtml(watchProvidersFromDetails(details), movie.title);
   } catch (e) {
     if (!document.body.contains(zone) || tonightPickMovie?.id !== movie.id) return;
-    zone.outerHTML = watchProvidersHtml(null);
+    zone.outerHTML = watchProvidersHtml(null, movie.title);
   }
 }
 
@@ -2990,7 +3020,7 @@ async function loadMovieActionDetails(movie) {
     const trailer = bestTrailerFromDetails(details);
     const url = trailerUrl(trailer);
     zone.innerHTML = `
-      ${watchProvidersHtml(watchProvidersFromDetails(details))}
+      ${watchProvidersHtml(watchProvidersFromDetails(details), movie.title)}
       <div class="movie-detail-box">
         <div class="movie-detail-label">Synopsis</div>
         <p>${escapeHtml(overview)}</p>
@@ -5942,9 +5972,14 @@ body.no-page-scroll #root {
   box-shadow: 3px 3px 8px var(--shadow-d), -3px -3px 8px var(--shadow-l);
 }
 .movie-trailer-btn:active { transform: scale(0.98); }
-.watch-provider-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.watch-provider-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.watch-provider-tile { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 44px; }
 .watch-provider-logo { width: 40px; height: 40px; border-radius: 11px; object-fit: cover; box-shadow: 3px 3px 8px var(--shadow-d), -3px -3px 8px var(--shadow-l); }
-.watch-provider-meta { margin-top: 8px; font-size: 10.5px; color: var(--ink-faint); font-weight: 650; }
+.watch-provider-tag { font-size: 8.5px; font-weight: 800; color: var(--ink-soft); text-align: center; line-height: 1.2; }
+.watch-provider-link {
+  display: inline-block; margin-top: 10px; color: var(--lav-deep); font-size: 11.5px; font-weight: 800;
+  text-decoration: underline;
+}
 .context-item { display: flex; align-items: center; gap: 12px; padding: 14px 12px; border-radius: 14px; font-weight: 600; font-size: 15px; color: var(--ink); cursor: pointer; transition: background 0.1s; }
 .context-item:active { background: var(--bg); }
 .context-item.danger { color: #d64668; }
