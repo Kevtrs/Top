@@ -3690,10 +3690,10 @@ function portraitStats(profileId = currentUser) {
   const ranked = allRankings[profileId] || [];
   const watched = allWatched[profileId] || [];
   const ratings = watched.map(movie => Number(movie.rating)).filter(Number.isFinite);
-  const directors = countPortraitItems(watched, movie => movie.director_id && movie.director_name
+  const directors = countPortraitItems(ranked, movie => movie.director_id && movie.director_name
     ? [{ id: Number(movie.director_id), name: movie.director_name }]
     : []);
-  const actors = countPortraitItems(watched, movie => Array.isArray(movie.cast_top) ? movie.cast_top : []);
+  const actors = countPortraitItems(ranked, movie => Array.isArray(movie.cast_top) ? movie.cast_top : []);
   const genres = countPortraitItems(watched, movie => (movie.genre_ids || []).map(id => ({ id: Number(id), name: PORTRAIT_GENRES[Number(id)] || "Cinéma" })));
   const perfectCount = ratings.filter(rating => rating === 10).length;
   const average = ratings.length ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length : null;
@@ -3771,8 +3771,14 @@ function portraitSignatureRow(label, item, type) {
 
 async function ensurePortraitMetadata() {
   if (!currentUser || portraitMetadataLoading) return;
+  const ranked = myRanked();
   const watched = myWatched();
-  const missing = watched.filter(movie => !Array.isArray(movie.cast_top) || !movie.cast_top.length).slice(0, 10);
+  const seenIds = new Set();
+  const missing = [...ranked, ...watched].filter(movie => {
+    if (!movie?.id || seenIds.has(Number(movie.id))) return false;
+    seenIds.add(Number(movie.id));
+    return !Array.isArray(movie.cast_top) || !movie.cast_top.length;
+  }).slice(0, 10);
   if (!missing.length) return;
   portraitMetadataLoading = true;
   try {
@@ -3784,8 +3790,22 @@ async function ensurePortraitMetadata() {
       } catch (error) {}
     }));
     if (castById.size) {
-      const updated = watched.map(movie => castById.has(Number(movie.id)) ? { ...movie, cast_top: castById.get(Number(movie.id)) } : movie);
-      await saveWatchedToCloud(currentUser, updated);
+      let rankedChanged = false;
+      let watchedChanged = false;
+      const updatedRanked = ranked.map(movie => {
+        if (!castById.has(Number(movie.id))) return movie;
+        rankedChanged = true;
+        return { ...movie, cast_top: castById.get(Number(movie.id)) };
+      });
+      const updatedWatched = watched.map(movie => {
+        if (!castById.has(Number(movie.id))) return movie;
+        watchedChanged = true;
+        return { ...movie, cast_top: castById.get(Number(movie.id)) };
+      });
+      await Promise.all([
+        rankedChanged ? saveRankingToCloud(currentUser, updatedRanked) : Promise.resolve(),
+        watchedChanged ? saveWatchedToCloud(currentUser, updatedWatched) : Promise.resolve()
+      ]);
       if (portraitProfileId === currentUser && document.getElementById("profile-overlay")?.classList.contains("show")) renderProfileSheetContent(currentUser);
     }
   } finally {
