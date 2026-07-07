@@ -3259,6 +3259,13 @@ function renderRanked() {
         openRecommendSheet(JSON.parse(btn.dataset.movie));
       });
     });
+    el.querySelectorAll(".rank-card").forEach(row => {
+      row.addEventListener("click", (e) => {
+        if (e.target.closest(".rank-recommend-btn")) return;
+        const movie = list[parseInt(row.dataset.index)];
+        if (movie) openMovieActionSheet(movie, "friend");
+      });
+    });
   }
 }
 
