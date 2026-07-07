@@ -9,9 +9,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Popcorn</title>
-<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260706-popcorn-v10">
-<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260706-popcorn-v10">
-<link rel="manifest" href="./site.webmanifest?v=20260706-popcorn-v10">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png?v=20260707-popcorn-v11">
+<link rel="icon" type="image/png" sizes="64x64" href="./favicon.png?v=20260707-popcorn-v11">
+<link rel="manifest" href="./site.webmanifest?v=20260707-popcorn-v11">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <script type="module">
@@ -40,7 +40,7 @@ const TMDB_BACKDROP = "https://image.tmdb.org/t/p/w500";
 const TMDB_PROFILE = "https://image.tmdb.org/t/p/w185";
 const TMDB_API_KEY = "83673b23203742ca5cbfa56db06b1785";
 const FCM_VAPID_KEY = "BNmsF3FCa5fMwFTNCi2kNcFZxNp8jnlzothr8Y-qTCjvxq7abLoh_mFreWKepxhRmi3ZCwup-IRJ9dnQToZ45CU";
-const PWA_VERSION = "20260706-popcorn-v10";
+const PWA_VERSION = "20260707-popcorn-v11";
 const APP_PUBLIC_URL = "https://kevtrs.github.io/Top/";
 
 const APP_TABS = [
@@ -323,6 +323,9 @@ let pendingRatingRecoDoc = null;
 let pendingActionMovie = null;
 let pendingActionOrigin = null;
 let pendingActionIndex = null;
+let portraitProfileId = null;
+let portraitSlideIndex = 0;
+let portraitMetadataLoading = false;
 let suppressNextRankClick = false;
 let onboardingNewUser = null;
 let incomingRecos = [];
@@ -483,6 +486,7 @@ function profilePayload(userId, preferredName = "") {
     initial: existing.initial || name[0]?.toUpperCase() || "?",
     color: existing.color || PROFILE_COLORS[Math.max(PROFILES.length + PROFILE_INDEX.length, 0) % PROFILE_COLORS.length],
     createdAt: existing.createdAt || Date.now(),
+    showcaseBadges: existing.showcaseBadges || [],
     updatedAt: Date.now()
   };
 }
@@ -730,6 +734,7 @@ async function getSagaMovieResult(id) {
         keyword_ids: (details.keywords?.keywords || []).map(keyword => Number(keyword.id)),
         director_id: director?.id || null,
         director_name: director?.name || null,
+        cast_top: (details.credits?.cast || []).slice(0, 6).map(person => ({ id: Number(person.id), name: person.name, profile_path: person.profile_path || null })),
         collection_id: details.belongs_to_collection?.id || null,
         collection_name: details.belongs_to_collection?.name || null
       };
@@ -766,6 +771,7 @@ function simplifyMovie(m) {
     director_name: m.director_name || m._directorName || null,
     collection_id: m.collection_id || null,
     collection_name: m.collection_name || null,
+    cast_top: Array.isArray(m.cast_top) ? m.cast_top.slice(0, 6) : [],
     challenge_meta_at: Number(m.challenge_meta_at) || 0,
     addedAt: Date.now()
   };
@@ -1222,7 +1228,9 @@ async function openBadgeMoviesSheet(challengeId) {
       <p>${escapeHtml(challenge.description)}</p>
       <div class="cinema-challenge-progress"><i style="width:${percent}%"></i></div>
     </div>
-    ${challenge.completed ? "" : `<button class="btn-secondary badge-objective-btn" id="btn-set-badge-objective" type="button">${active?.id === challenge.id ? "Objectif actif" : "Choisir comme objectif"}</button>`}`;
+    ${challenge.completed
+      ? `<button class="btn-secondary badge-objective-btn" id="btn-toggle-showcase-badge" type="button">${isBadgeShowcased(challenge.id) ? "★ Dans ta vitrine" : "☆ Ajouter à ta vitrine"}</button>`
+      : `<button class="btn-secondary badge-objective-btn" id="btn-set-badge-objective" type="button">${active?.id === challenge.id ? "Objectif actif" : "Choisir comme objectif"}</button>`}`;
   list.innerHTML = `<div class="badge-movies-loading">${Array(6).fill('<span></span>').join("")}</div>`;
 
   document.getElementById("btn-set-badge-objective")?.addEventListener("click", event => {
@@ -1230,6 +1238,12 @@ async function openBadgeMoviesSheet(challengeId) {
     event.currentTarget.textContent = "Objectif actif";
     renderPage();
     showToast(`${challenge.name} devient ton objectif`);
+  });
+  document.getElementById("btn-toggle-showcase-badge")?.addEventListener("click", async event => {
+    event.currentTarget.disabled = true;
+    const changed = await toggleShowcaseBadge(challenge);
+    event.currentTarget.disabled = false;
+    if (changed) event.currentTarget.textContent = isBadgeShowcased(challenge.id) ? "★ Dans ta vitrine" : "☆ Ajouter à ta vitrine";
   });
 
   try {
@@ -1398,7 +1412,8 @@ function normalizeProfileData(profile, fallbackId) {
     name,
     initial: profile?.initial || profile?.profileInitial || name.trim()[0]?.toUpperCase() || "?",
     color: profile?.color || profile?.profileColor || "var(--lav)",
-    createdAt: profile?.createdAt || profile?.profileCreatedAt || 0
+    createdAt: profile?.createdAt || profile?.profileCreatedAt || 0,
+    showcaseBadges: Array.isArray(profile?.showcaseBadges) ? profile.showcaseBadges.slice(0, 3) : []
   };
 }
 function hasProfile(profileId) {
@@ -1465,7 +1480,7 @@ function platformTapFeedback(pattern = 8) {
   try { navigator.vibrate(pattern); } catch (e) {}
 }
 function setupPlatformOverlayHistory() {
-  const overlays = [...document.querySelectorAll(".context-overlay")];
+  const overlays = [...document.querySelectorAll(".context-overlay, .portrait-story-overlay")];
   if (!overlays.length) return;
   const observer = new MutationObserver(mutations => {
     if (!isAndroidDevice() || !isStandaloneApp()) return;
@@ -1487,7 +1502,7 @@ function setupPlatformOverlayHistory() {
       return;
     }
     if (!isAndroidDevice() || !isStandaloneApp()) return;
-    const openOverlays = [...document.querySelectorAll(".context-overlay.show")];
+    const openOverlays = [...document.querySelectorAll(".context-overlay.show, .portrait-story-overlay.show")];
     const topOverlay = openOverlays[openOverlays.length - 1];
     if (topOverlay) closeOverlayElement(topOverlay);
   });
@@ -1541,7 +1556,7 @@ function updatePageScrollLock() {
   const availableHeight = Math.max(0, window.innerHeight - reservedBottom);
   const contentHeight = Math.ceil(root.scrollHeight);
   const pageNeedsScroll = contentHeight > availableHeight + 6;
-  const overlayOpen = !!document.querySelector(".context-overlay.show");
+  const overlayOpen = !!document.querySelector(".context-overlay.show, .portrait-story-overlay.show");
   const shouldLock = overlayOpen || !pageNeedsScroll;
 
   document.querySelectorAll(".context-overlay").forEach(overlay => {
@@ -2246,6 +2261,7 @@ function renderApp() {
           <div class="brand-title">${appLogoHtml("brand-logo", "icon")}Popcorn</div>
         </div>
         <div class="header-btns">
+          <button class="icon-pill profile-header-btn" id="btn-open-my-profile" type="button" title="Mon profil cinéma" aria-label="Ouvrir mon profil cinéma">${profileAvatarHtml(currentUser, 30)}</button>
           <button class="icon-pill" id="btn-settings" type="button" title="Réglages" aria-label="Ouvrir les réglages">${tabIconHtml("settings")}</button>
         </div>
       </div>
@@ -2358,6 +2374,7 @@ function attachGlobalSearch() {
 
 function attachAppEvents() {
   document.getElementById("btn-settings")?.addEventListener("click", openSettingsSheet);
+  document.getElementById("btn-open-my-profile")?.addEventListener("click", () => openProfileSheet(currentUser));
 
   document.querySelectorAll(".app-tab-item").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -2428,8 +2445,7 @@ function attachAppEvents() {
 
   document.querySelectorAll(".profile-chip, .friend-card").forEach(el => {
     el.addEventListener("click", () => {
-      viewingUser = el.dataset.id;
-      renderPage();
+      openProfileSheet(el.dataset.id);
     });
   });
 
@@ -2720,6 +2736,7 @@ async function addToWatched(movie, rating) {
         original_language: details.original_language || null,
         director_id: director?.id || null,
         director_name: director?.name || null,
+        cast_top: (details.credits?.cast || []).slice(0, 6).map(person => ({ id: Number(person.id), name: person.name, profile_path: person.profile_path || null })),
         collection_id: details.belongs_to_collection?.id || null,
         collection_name: details.belongs_to_collection?.name || null,
         challenge_meta_at: Date.now(),
@@ -2893,6 +2910,8 @@ function closeOverlayElement(overlay) {
     "movie-action-overlay": closeMovieActionSheet,
     "install-overlay": closeInstallSheet,
     "settings-overlay": closeSettingsSheet,
+    "profile-overlay": closeProfileSheet,
+    "portrait-story-overlay": closePortraitStory,
     "cinema-challenges-overlay": closeChallengesSheet,
     "badge-movies-overlay": closeBadgeMoviesSheet,
     "badge-unlock-overlay": closeBadgeUnlockSheet,
@@ -3421,6 +3440,263 @@ async function runConfirmedAction() {
   }
 }
 
+const PORTRAIT_GENRES = {
+  28: "Action", 12: "Aventure", 16: "Animation", 35: "Comédie", 80: "Crime",
+  99: "Documentaire", 18: "Drame", 10751: "Famille", 14: "Fantastique", 36: "Histoire",
+  27: "Horreur", 10402: "Musique", 9648: "Mystère", 10749: "Romance",
+  878: "Science-fiction", 53: "Thriller", 10752: "Guerre", 37: "Western"
+};
+
+function countPortraitItems(items, getItems) {
+  const counts = new Map();
+  items.forEach(movie => (getItems(movie) || []).forEach(item => {
+    if (!item?.id || !item?.name) return;
+    const current = counts.get(item.id) || { ...item, count: 0 };
+    current.count += 1;
+    counts.set(item.id, current);
+  }));
+  return [...counts.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))[0] || null;
+}
+
+function portraitStats(profileId = currentUser) {
+  const profile = profileById(profileId) || fallbackProfile(profileId);
+  const ranked = allRankings[profileId] || [];
+  const watched = allWatched[profileId] || [];
+  const ratings = watched.map(movie => Number(movie.rating)).filter(Number.isFinite);
+  const directors = countPortraitItems(watched, movie => movie.director_id && movie.director_name
+    ? [{ id: Number(movie.director_id), name: movie.director_name }]
+    : []);
+  const actors = countPortraitItems(watched, movie => Array.isArray(movie.cast_top) ? movie.cast_top : []);
+  const genres = countPortraitItems(watched, movie => (movie.genre_ids || []).map(id => ({ id: Number(id), name: PORTRAIT_GENRES[Number(id)] || "Cinéma" })));
+  const perfectCount = ratings.filter(rating => rating === 10).length;
+  const average = ratings.length ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length : null;
+  const showcased = Array.isArray(profile.showcaseBadges) ? profile.showcaseBadges.slice(0, 3) : [];
+  const fallbackBadges = profileId === currentUser
+    ? cinemaChallengeCatalog().filter(challenge => challenge.completed).slice(0, 3).map(snapshotBadgeForPortrait)
+    : [];
+  return { profile, ranked, watched, average, perfectCount, directors, actors, genres, badges: showcased.length ? showcased : fallbackBadges };
+}
+
+function snapshotBadgeForPortrait(challenge) {
+  return {
+    id: challenge.id, name: challenge.name, art: challenge.art || null,
+    badgePhoto: challenge.badgePhoto || null, badgeIcon: challenge.badgeIcon || null,
+    badgeShape: challenge.badgeShape || null, badgePosition: challenge.badgePosition || null,
+    backdropPath: challenge.backdropPath || null, legendary: !!challenge.legendary, symbol: challenge.symbol || null
+  };
+}
+
+function myShowcaseBadges() {
+  return profileById(currentUser)?.showcaseBadges || [];
+}
+
+function isBadgeShowcased(challengeId) {
+  return myShowcaseBadges().some(badge => badge.id === challengeId);
+}
+
+async function setShowcaseBadges(list) {
+  if (!currentUser) return;
+  const previousProfiles = PROFILES;
+  const me = profileById(currentUser) || fallbackProfile(currentUser);
+  const updated = { ...me, showcaseBadges: list.slice(0, 3), updatedAt: Date.now() };
+  PROFILES = [...PROFILES.filter(profile => profile.id !== currentUser), updated];
+  try {
+    const writes = await Promise.allSettled([
+      setDoc(doc(db, "profiles", currentUser), updated, { merge: true }),
+      setDoc(doc(db, "profileIndex", currentUser), updated, { merge: true })
+    ]);
+    if (!writes.some(result => result.status === "fulfilled")) throw new Error("showcase-write-failed");
+  } catch (error) {
+    PROFILES = previousProfiles;
+    throw error;
+  }
+}
+
+async function toggleShowcaseBadge(challenge) {
+  const current = myShowcaseBadges();
+  const exists = current.some(badge => badge.id === challenge.id);
+  if (!exists && current.length >= 3) {
+    showToast("Ta vitrine contient déjà trois badges");
+    return false;
+  }
+  const next = exists ? current.filter(badge => badge.id !== challenge.id) : [...current, snapshotBadgeForPortrait(challenge)];
+  try {
+    await setShowcaseBadges(next);
+    showToast(exists ? `${challenge.name} retiré de ta vitrine` : `${challenge.name} ajouté à ta vitrine`);
+    return true;
+  } catch (error) {
+    showToast("Impossible d'enregistrer ta vitrine");
+    return false;
+  }
+}
+
+function portraitPersonImage(person, type) {
+  if (person?.profile_path) return `${TMDB_PROFILE}${person.profile_path}`;
+  if (type === "director" && DIRECTOR_BADGE_ASSETS[person?.id]?.photo) return DIRECTOR_BADGE_ASSETS[person.id].photo;
+  return type === "actor" ? "./badge-assets/artist.jpg" : "./badge-assets/camera.jpg";
+}
+
+function portraitSignatureRow(label, item, type) {
+  if (!item) return `<div class="portrait-signature-empty"><small>${escapeHtml(label)}</small><strong>À découvrir au fil de tes films</strong></div>`;
+  const image = type === "genre" ? "./badge-assets/space.jpg" : portraitPersonImage(item, type);
+  return `<div class="portrait-signature-row"><img src="${escapeAttr(image)}" alt=""><div><small>${escapeHtml(label)}</small><strong>${escapeHtml(item.name)}</strong></div><span>${item.count} film${item.count > 1 ? "s" : ""}</span></div>`;
+}
+
+async function ensurePortraitMetadata() {
+  if (!currentUser || portraitMetadataLoading) return;
+  const watched = myWatched();
+  const missing = watched.filter(movie => !Array.isArray(movie.cast_top) || !movie.cast_top.length).slice(0, 10);
+  if (!missing.length) return;
+  portraitMetadataLoading = true;
+  try {
+    const castById = new Map();
+    await Promise.all(missing.map(async movie => {
+      try {
+        const details = await getMovieDetails(movie.id);
+        castById.set(Number(movie.id), (details.credits?.cast || []).slice(0, 6).map(person => ({ id: Number(person.id), name: person.name, profile_path: person.profile_path || null })));
+      } catch (error) {}
+    }));
+    if (castById.size) {
+      const updated = watched.map(movie => castById.has(Number(movie.id)) ? { ...movie, cast_top: castById.get(Number(movie.id)) } : movie);
+      await saveWatchedToCloud(currentUser, updated);
+      if (portraitProfileId === currentUser && document.getElementById("profile-overlay")?.classList.contains("show")) renderProfileSheetContent(currentUser);
+    }
+  } finally {
+    portraitMetadataLoading = false;
+  }
+}
+
+function renderProfileSheetContent(profileId) {
+  const zone = document.getElementById("profile-sheet-content");
+  if (!zone) return;
+  const stats = portraitStats(profileId);
+  const isMe = profileId === currentUser;
+  const heroMovie = stats.ranked[0] || stats.watched[0];
+  const heroStyle = heroMovie?.poster_path ? `style="--portrait-hero:url('${escapeAttr(TMDB_IMG + heroMovie.poster_path)}')"` : "";
+  zone.innerHTML = `<div class="portrait-sheet" ${heroStyle}>
+    <div class="portrait-hero"><div class="portrait-identity">${profileAvatarHtml(profileId, 82)}<div><h2>${escapeHtml(stats.profile.name)}</h2><p>${stats.profile.createdAt ? `Membre depuis ${new Date(stats.profile.createdAt).toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}` : "Profil cinéma Popcorn"}</p></div></div></div>
+    <div class="portrait-body">
+      <div class="portrait-stats"><div><b>${stats.ranked.length}</b><span>dans son Top</span></div><div><b>${stats.watched.length}</b><span>films vus</span></div><div><b>${stats.average === null ? "—" : stats.average.toFixed(1).replace(".", ",")}</b><span>note moyenne</span></div></div>
+      <div class="portrait-section-title"><strong>Sa signature cinéma</strong><span>FILMS VUS</span></div>
+      <div class="portrait-signature">${portraitSignatureRow("RÉALISATEUR FÉTICHE", stats.directors, "director")}${portraitSignatureRow("ACTEUR INCONTOURNABLE", stats.actors, "actor")}${portraitSignatureRow("UNIVERS DE PRÉDILECTION", stats.genres, "genre")}</div>
+      <div class="portrait-section-title"><strong>Badges en vitrine</strong><span>${stats.badges.length} / 3</span></div>
+      <div class="portrait-badges">${stats.badges.length ? stats.badges.map(badge => `<button data-badge-id="${escapeAttr(badge.id)}" type="button">${challengeBadgeArtHtml(badge)}<small>${escapeHtml(badge.name)}</small></button>`).join("") : `<p>${isMe ? "Choisis jusqu'à trois badges gagnés depuis l'onglet Badges." : "Aucun badge mis en avant pour le moment."}</p>`}</div>
+      <button class="portrait-wrapped-btn" id="btn-open-portrait-story" type="button"><span>✦</span><div><strong>Voir ${isMe ? "mon" : "son"} portrait cinéma</strong><small>Un carrousel de statistiques à partager</small></div><b>›</b></button>
+      ${!isMe ? `<button class="btn-secondary portrait-view-top" id="btn-profile-view-top" type="button">Voir le Top de ${escapeHtml(stats.profile.name)}</button>` : ""}
+    </div></div>`;
+  document.getElementById("btn-open-portrait-story")?.addEventListener("click", () => openPortraitStory(profileId));
+  document.getElementById("btn-profile-view-top")?.addEventListener("click", () => { closeProfileSheet(); activeTab = "friends"; viewingUser = profileId; renderPage(); });
+  zone.querySelectorAll(".portrait-badges button").forEach(button => button.addEventListener("click", () => { closeProfileSheet(); activeTab = "badges"; renderPage(); setTimeout(() => openBadgeMoviesSheet(button.dataset.badgeId), 60); }));
+}
+
+function openProfileSheet(profileId = currentUser) {
+  if (!profileId) return;
+  portraitProfileId = profileId;
+  renderProfileSheetContent(profileId);
+  document.getElementById("profile-overlay")?.classList.add("show");
+  scheduleScrollLockUpdate();
+  if (profileId === currentUser) ensurePortraitMetadata();
+}
+
+function closeProfileSheet() {
+  document.getElementById("profile-overlay")?.classList.remove("show");
+  scheduleScrollLockUpdate();
+}
+
+function portraitMoviePoster(movie, position) {
+  const image = movie?.poster_path ? `style="background-image:url('${escapeAttr(TMDB_IMG + movie.poster_path)}')"` : "";
+  return `<div class="portrait-story-poster p${position}" ${image}><em>${position}</em><strong>${escapeHtml(movie?.title || "À compléter")}</strong></div>`;
+}
+
+function renderPortraitStory(profileId) {
+  const stats = portraitStats(profileId);
+  const top = stats.ranked.slice(0, 3);
+  const average = stats.average === null ? "—" : stats.average.toFixed(1).replace(".", ",");
+  const slides = [
+    `<article class="portrait-story-slide story-cover"><div class="story-bottom">${profileAvatarHtml(profileId, 72)}<small>LE PORTRAIT CINÉMA DE</small><h2>${escapeHtml(stats.profile.name)}</h2><span>POPCORN · MAINTENANT</span></div></article>`,
+    `<article class="portrait-story-slide story-numbers"><small>SON CINÉMA EN CHIFFRES</small><div class="story-big-number">${stats.watched.length}</div><h2>films vus</h2><p>Autant d'histoires, de mondes et de souvenirs à l'écran.</p><div class="story-mini-grid"><div><b>${stats.ranked.length}</b><span>DANS SON TOP</span></div><div><b>${average}</b><span>NOTE MOYENNE</span></div></div></article>`,
+    `<article class="portrait-story-slide story-top"><small>SON PODIUM</small><h2>Trois films.<br>Une seule place nº 1.</h2><div class="portrait-story-posters">${[0,1,2].map(index => portraitMoviePoster(top[index], index + 1)).join("")}</div></article>`,
+    `<article class="portrait-story-slide story-person" style="--person-image:url('${escapeAttr(portraitPersonImage(stats.directors, "director"))}')"><div><span>${stats.directors?.count || 0} FILM${stats.directors?.count > 1 ? "S" : ""} VU${stats.directors?.count > 1 ? "S" : ""}</span><small>SON RÉALISATEUR FÉTICHE</small><h2>${escapeHtml(stats.directors?.name || "Encore à découvrir")}</h2></div></article>`,
+    `<article class="portrait-story-slide story-person story-actor" style="--person-image:url('${escapeAttr(portraitPersonImage(stats.actors, "actor"))}')"><div><span>${stats.actors?.count || 0} FILM${stats.actors?.count > 1 ? "S" : ""} VU${stats.actors?.count > 1 ? "S" : ""}</span><small>SON ACTEUR INCONTOURNABLE</small><h2>${escapeHtml(stats.actors?.name || "Encore à découvrir")}</h2></div></article>`,
+    `<article class="portrait-story-slide story-genre"><small>SON UNIVERS DE PRÉDILECTION</small><div class="story-planet"></div><b>${stats.genres?.count || 0} FILMS</b><h2>${escapeHtml(stats.genres?.name || "À découvrir")}</h2></article>`,
+    `<article class="portrait-story-slide story-rating"><small>SA FAÇON DE NOTER</small><div class="story-score"><b>${average}</b><span>/10</span></div><h2>${stats.average !== null && stats.average >= 7.5 ? "Exigeant, mais généreux" : "Chaque note raconte quelque chose"}</h2><p>${stats.perfectCount} film${stats.perfectCount > 1 ? "s ont" : " a"} décroché le précieux 10/10.</p></article>`,
+    `<article class="portrait-story-slide story-badges"><small>SA VITRINE DE TROPHÉES</small><h2>Trois badges qui racontent son cinéma</h2><div>${stats.badges.map(badge => `<span>${challengeBadgeArtHtml(badge)}<b>${escapeHtml(badge.name)}</b></span>`).join("") || "<p>Ses prochains trophées l'attendent.</p>"}</div></article>`,
+    `<article class="portrait-story-slide story-final"><small>SON PORTRAIT EN UNE CARTE</small><div class="story-share-card">${profileAvatarHtml(profileId, 58)}<h2>${escapeHtml(stats.profile.name)}</h2><div><span><b>${stats.watched.length}</b>FILMS VUS</span><span><b>${average}</b>MOYENNE</span><span><b>${stats.ranked.length}</b>DANS LE TOP</span></div><p>${escapeHtml(stats.directors?.name || "Cinéma")} · ${escapeHtml(stats.actors?.name || "Découvertes")} · ${escapeHtml(stats.genres?.name || "Tous les univers")}</p></div><em>Prêt à partager ton univers cinéma ?</em></article>`
+  ];
+  document.getElementById("portrait-story-slides").innerHTML = slides.join("");
+  document.getElementById("portrait-story-progress").innerHTML = slides.map((_, index) => `<i class="${index === 0 ? "active" : ""}"></i>`).join("");
+  portraitSlideIndex = 0;
+  updatePortraitStory();
+}
+
+function updatePortraitStory() {
+  const slides = [...document.querySelectorAll(".portrait-story-slide")];
+  slides.forEach((slide, index) => slide.classList.toggle("active", index === portraitSlideIndex));
+  [...document.querySelectorAll("#portrait-story-progress i")].forEach((bar, index) => bar.className = index < portraitSlideIndex ? "done" : index === portraitSlideIndex ? "active" : "");
+  const previous = document.getElementById("btn-portrait-prev");
+  const next = document.getElementById("btn-portrait-next");
+  const share = document.getElementById("btn-portrait-share");
+  if (previous) previous.style.visibility = portraitSlideIndex ? "visible" : "hidden";
+  if (next) next.hidden = portraitSlideIndex >= slides.length - 1;
+  if (share) share.hidden = portraitSlideIndex < slides.length - 1;
+}
+
+function openPortraitStory(profileId = portraitProfileId || currentUser) {
+  portraitProfileId = profileId;
+  renderPortraitStory(profileId);
+  const overlay = document.getElementById("portrait-story-overlay");
+  overlay?.classList.add("show");
+  overlay?.setAttribute("aria-hidden", "false");
+  scheduleScrollLockUpdate();
+}
+
+function closePortraitStory() {
+  const overlay = document.getElementById("portrait-story-overlay");
+  overlay?.classList.remove("show");
+  overlay?.setAttribute("aria-hidden", "true");
+  scheduleScrollLockUpdate();
+}
+
+function portraitShareCanvas(stats) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1080; canvas.height = 1920;
+  const ctx = canvas.getContext("2d");
+  const gradient = ctx.createLinearGradient(0, 0, 1080, 1920);
+  gradient.addColorStop(0, "#2e2443"); gradient.addColorStop(.55, "#654681"); gradient.addColorStop(1, "#c27895");
+  ctx.fillStyle = gradient; ctx.fillRect(0, 0, 1080, 1920);
+  ctx.fillStyle = "rgba(255,255,255,.11)"; ctx.beginPath(); ctx.roundRect(90, 250, 900, 1170, 58); ctx.fill();
+  ctx.fillStyle = "#fff"; ctx.font = "800 72px Arial"; ctx.fillText(stats.profile.name, 150, 410);
+  ctx.font = "600 28px Arial"; ctx.fillStyle = "rgba(255,255,255,.7)"; ctx.fillText("PORTRAIT CINÉMA · POPCORN", 150, 465);
+  const average = stats.average === null ? "—" : stats.average.toFixed(1).replace(".", ",");
+  [[stats.watched.length,"FILMS VUS"],[average,"MOYENNE"],[stats.ranked.length,"DANS LE TOP"]].forEach(([value,label], index) => {
+    const x = 150 + index * 280; ctx.fillStyle = "rgba(255,255,255,.1)"; ctx.beginPath(); ctx.roundRect(x, 560, 240, 190, 28); ctx.fill();
+    ctx.fillStyle = "#fff"; ctx.font = "800 54px Arial"; ctx.textAlign = "center"; ctx.fillText(String(value), x + 120, 645);
+    ctx.fillStyle = "rgba(255,255,255,.65)"; ctx.font = "700 19px Arial"; ctx.fillText(label, x + 120, 700);
+  });
+  ctx.textAlign = "left"; ctx.fillStyle = "rgba(255,255,255,.7)"; ctx.font = "700 22px Arial"; ctx.fillText("SA SIGNATURE CINÉMA", 150, 870);
+  ctx.fillStyle = "#fff"; ctx.font = "800 38px Arial";
+  [stats.directors?.name || "Cinéma", stats.actors?.name || "Découvertes", stats.genres?.name || "Tous les univers"].forEach((line, index) => ctx.fillText(line, 150, 950 + index * 70));
+  ctx.textAlign = "center"; ctx.fillStyle = "rgba(255,255,255,.7)"; ctx.font = "600 26px Arial"; ctx.fillText("Créé avec Popcorn", 540, 1650);
+  return canvas;
+}
+
+async function sharePortraitStory() {
+  const stats = portraitStats(portraitProfileId || currentUser);
+  const blob = await new Promise(resolve => portraitShareCanvas(stats).toBlob(resolve, "image/png"));
+  const file = blob ? new File([blob], `portrait-cinema-${slugify(stats.profile.name)}.png`, { type: "image/png" }) : null;
+  try {
+    if (file && navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ files: [file], title: `Le portrait cinéma de ${stats.profile.name}`, text: "Découvre mon univers cinéma sur Popcorn." });
+    } else if (navigator.share) {
+      await navigator.share({ title: `Le portrait cinéma de ${stats.profile.name}`, text: `🎬 ${stats.profile.name} · ${stats.watched.length} films vus · ${stats.genres?.name || "cinéphile"}`, url: APP_PUBLIC_URL });
+    } else {
+      await copyAppLink();
+    }
+  } catch (error) {
+    if (error.name !== "AbortError") showToast("Partage indisponible pour le moment");
+  }
+}
+
 function renderSettingsSheetContent() {
   const me = profileById(currentUser) || fallbackProfile(currentUser);
   const topCount = myRanked().length;
@@ -3840,6 +4116,7 @@ async function ensureChallengeMetadata() {
           original_language: details.original_language || null,
           director_id: director?.id || null,
           director_name: director?.name || null,
+          cast_top: (details.credits?.cast || []).slice(0, 6).map(person => ({ id: Number(person.id), name: person.name, profile_path: person.profile_path || null })),
           collection_id: details.belongs_to_collection?.id || null,
           collection_name: details.belongs_to_collection?.name || null,
           challenge_meta_at: Date.now(),
@@ -4470,6 +4747,20 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target.id === "settings-overlay") closeSettingsSheet();
   });
   document.getElementById("btn-close-settings").addEventListener("click", closeSettingsSheet);
+  document.getElementById("profile-overlay").addEventListener("click", (e) => {
+    if (e.target.id === "profile-overlay") closeProfileSheet();
+  });
+  document.getElementById("btn-close-profile").addEventListener("click", closeProfileSheet);
+  document.getElementById("portrait-story-overlay").addEventListener("click", (e) => {
+    if (e.target.id === "portrait-story-overlay") closePortraitStory();
+  });
+  document.getElementById("btn-close-portrait-story").addEventListener("click", closePortraitStory);
+  document.getElementById("btn-portrait-prev").addEventListener("click", () => { if (portraitSlideIndex > 0) { portraitSlideIndex -= 1; updatePortraitStory(); } });
+  document.getElementById("btn-portrait-next").addEventListener("click", () => {
+    const count = document.querySelectorAll(".portrait-story-slide").length;
+    if (portraitSlideIndex < count - 1) { portraitSlideIndex += 1; updatePortraitStory(); }
+  });
+  document.getElementById("btn-portrait-share").addEventListener("click", sharePortraitStory);
   document.getElementById("cinema-challenges-overlay").addEventListener("click", (e) => {
     if (e.target.id === "cinema-challenges-overlay") closeChallengesSheet();
   });
@@ -4497,7 +4788,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
-    const openOverlays = [...document.querySelectorAll(".context-overlay.show")];
+    const openOverlays = [...document.querySelectorAll(".context-overlay.show, .portrait-story-overlay.show")];
     const topOverlay = openOverlays[openOverlays.length - 1];
     if (topOverlay) closeOverlayElement(topOverlay);
   });
@@ -5612,6 +5903,63 @@ body:has(.app-tabbar-wrap) .toast { bottom: calc(env(safe-area-inset-bottom, 0px
 }
 .boot-loading .loading-spin { width: 28px; height: 28px; border-width: 3px; }
 
+/* Profil cinéma éditorial */
+.profile-header-btn { padding: 0; overflow: hidden; }
+.profile-header-btn .avatar-poster, .profile-header-btn .avatar-initial-sm { width: 32px !important; height: 32px !important; }
+.profile-sheet-shell { max-width: 520px; padding: 0; overflow: hidden; background: #F7F4FB; }
+.profile-sheet-shell > .context-handle { position: absolute; z-index: 5; left: 50%; top: 8px; transform: translateX(-50%); background: rgba(255,255,255,.72); }
+#profile-sheet-content { max-height: min(88vh, 820px); overflow-y: auto; overscroll-behavior: contain; }
+.portrait-sheet { --portrait-hero: linear-gradient(135deg,#6d4da7,#2c253b); }
+.portrait-hero { min-height: 235px; position: relative; display: flex; align-items: flex-end; padding: 54px 22px 20px; color: #fff; background-image: linear-gradient(180deg,rgba(25,18,38,.08),rgba(25,18,38,.94)),var(--portrait-hero); background-size: cover; background-position: center 28%; }
+.portrait-identity { display: flex; align-items: flex-end; gap: 13px; width: 100%; }
+.portrait-identity .avatar-poster, .portrait-identity .avatar-initial-sm { border: 4px solid rgba(255,255,255,.95); box-shadow: 0 10px 25px rgba(0,0,0,.25); }
+.portrait-identity h2 { margin: 0; font-size: 27px; line-height: 1; }
+.portrait-identity p { margin: 6px 0 4px; font-family: 'DM Mono',monospace; font-size: 8px; text-transform: uppercase; opacity: .7; }
+.portrait-body { padding: 18px 20px 30px; }
+.portrait-stats { display: grid; grid-template-columns: repeat(3,1fr); gap: 7px; padding: 14px 8px; border-radius: 19px; background: #fff; box-shadow: 0 8px 24px rgba(66,53,92,.08); }
+.portrait-stats div { text-align: center; min-width: 0; }
+.portrait-stats b { display: block; font-size: 19px; }
+.portrait-stats span { display: block; margin-top: 2px; color: var(--ink-soft); font-size: 8px; font-weight: 750; }
+.portrait-section-title { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin: 21px 1px 10px; }
+.portrait-section-title strong { font-size: 13px; }.portrait-section-title span { color: var(--ink-soft); font: 700 8px 'DM Mono',monospace; }
+.portrait-signature { display: grid; gap: 9px; }
+.portrait-signature-row { display: grid; grid-template-columns: 43px minmax(0,1fr) auto; gap: 10px; align-items: center; padding: 9px 10px; border-radius: 15px; background: #fff; }
+.portrait-signature-row img { width: 43px; height: 43px; border-radius: 13px; object-fit: cover; }
+.portrait-signature-row small,.portrait-signature-empty small { display: block; color: var(--ink-soft); font: 700 7px 'DM Mono',monospace; }
+.portrait-signature-row strong,.portrait-signature-empty strong { display: block; margin-top: 3px; font-size: 11px; }
+.portrait-signature-row > span { color: var(--lav-deep); font: 700 9px 'DM Mono',monospace; }
+.portrait-signature-empty { padding: 13px; border-radius: 15px; background: rgba(255,255,255,.68); }
+.portrait-badges { min-height: 76px; display: flex; align-items: flex-start; justify-content: space-around; gap: 12px; padding: 13px; border-radius: 18px; background: #fff; }
+.portrait-badges button { width: 76px; border: 0; background: none; color: var(--ink); font-family: inherit; }
+.portrait-badges button > span,.portrait-badges button > div { display: block; width: 52px; height: 52px; margin: auto; }
+.portrait-badges small { display: block; margin-top: 5px; font-size: 7px; font-weight: 800; line-height: 1.15; }
+.portrait-badges p { margin: auto; color: var(--ink-soft); font-size: 10px; text-align: center; }
+.portrait-wrapped-btn { width: 100%; display: grid; grid-template-columns: 38px 1fr auto; gap: 11px; align-items: center; margin-top: 20px; padding: 13px; border: 0; border-radius: 18px; color: #fff; text-align: left; font-family: inherit; background: linear-gradient(135deg,#3c304f,#8b67d7 62%,#d2789b); box-shadow: 0 12px 28px rgba(94,67,135,.24); }
+.portrait-wrapped-btn > span { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 13px; background: rgba(255,255,255,.14); font-size: 20px; }
+.portrait-wrapped-btn strong { display: block; font-size: 12px; }.portrait-wrapped-btn small { display: block; margin-top: 3px; font-size: 8px; opacity: .7; }.portrait-wrapped-btn > b { font-size: 22px; }
+.portrait-view-top { margin-top: 10px; }
+
+/* Portrait cinéma — carrousel */
+.portrait-story-overlay { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; padding: 18px; background: rgba(27,21,38,.72); backdrop-filter: blur(12px); opacity: 0; pointer-events: none; transition: opacity .22s; }
+.portrait-story-overlay.show { opacity: 1; pointer-events: auto; }
+.portrait-story-phone { width: min(390px,100%); height: min(820px,calc(100dvh - 36px)); min-height: 620px; position: relative; overflow: hidden; border: 7px solid #25212d; border-radius: 39px; background: #272031; box-shadow: 0 30px 80px rgba(0,0,0,.38); }
+.portrait-story-progress { position: absolute; z-index: 8; top: 21px; left: 17px; right: 17px; display: flex; gap: 4px; }
+.portrait-story-progress i { flex: 1; height: 3px; border-radius: 3px; background: rgba(255,255,255,.28); }.portrait-story-progress i.done,.portrait-story-progress i.active { background: #fff; }
+.portrait-story-close { position: absolute; z-index: 9; right: 18px; top: 39px; width: 38px; height: 38px; border: 0; border-radius: 50%; color: #fff; background: rgba(31,23,43,.3); backdrop-filter: blur(10px); font-size: 18px; }
+.portrait-story-slides { height: 100%; }.portrait-story-slide { position: absolute; inset: 0; display: none; flex-direction: column; padding: 92px 27px 94px; overflow: hidden; }.portrait-story-slide.active { display: flex; animation: portrait-slide-in .32s cubic-bezier(.2,.8,.2,1); }
+@keyframes portrait-slide-in { from { opacity: 0; transform: translateX(25px) scale(.985); } to { opacity: 1; transform: none; } }
+.portrait-story-slide > small { font: 700 8px 'DM Mono',monospace; letter-spacing: 1px; opacity: .66; }.portrait-story-slide h2 { margin: 10px 0; font-size: 33px; line-height: 1.03; letter-spacing: -1px; }.portrait-story-slide p { font-size: 11px; line-height: 1.45; opacity: .7; }
+.portrait-story-nav { position: absolute; z-index: 9; bottom: 17px; left: 18px; right: 18px; display: flex; gap: 8px; }.portrait-story-nav button { min-height: 50px; border: 0; border-radius: 15px; font-family: inherit; font-size: 11px; font-weight: 800; user-select: none; }.portrait-story-nav button:first-child { width: 52px; color: #fff; background: rgba(255,255,255,.2); font-size: 18px; }.portrait-story-nav button:not(:first-child) { flex: 1; color: #443656; background: #fff; }
+.story-cover { color: #fff; background: linear-gradient(180deg,rgba(24,17,37,.05),rgba(24,17,37,.94)),url('./badge-assets/space.jpg') center/cover; }.story-bottom { margin-top: auto; }.story-bottom small { display: block; margin-top: 18px; font: 700 8px 'DM Mono',monospace; }.story-bottom h2 { margin: 7px 0; font-size: 43px; }.story-bottom > span { font: 600 8px 'DM Mono',monospace; opacity: .65; }
+.story-numbers { color: #352943; background: linear-gradient(155deg,#f7b6ca,#f4d8a3 55%,#f8eff8); }.story-big-number { margin-top: auto; font-size: 110px; line-height: .85; font-weight: 800; letter-spacing: -7px; }.story-numbers h2 { font: 700 14px 'DM Mono',monospace; text-transform: uppercase; }.story-mini-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin: 28px 0 8px; }.story-mini-grid div { padding: 15px; border-radius: 18px; background: rgba(255,255,255,.5); }.story-mini-grid b { display: block; font-size: 22px; }.story-mini-grid span { font: 700 7px 'DM Mono',monospace; opacity: .6; }
+.story-top { color: #fff; background: #211a2d; }.portrait-story-posters { height: 390px; position: relative; margin-top: 17px; }.portrait-story-poster { width: 168px; height: 252px; position: absolute; overflow: hidden; border: 2px solid rgba(255,255,255,.14); border-radius: 20px; background: linear-gradient(145deg,#6e5796,#332944) center/cover; box-shadow: 0 18px 40px rgba(0,0,0,.38); }.portrait-story-poster:after { content:""; position:absolute; inset:35% 0 0; background:linear-gradient(transparent,rgba(17,12,25,.94)); }.portrait-story-poster em { position:absolute; z-index:2; left:11px; top:11px; width:29px; height:29px; display:grid; place-items:center; border-radius:10px; color:#2d2639; background:#fff; font-style:normal; font-weight:800; }.portrait-story-poster strong { position:absolute; z-index:2; left:14px; right:10px; bottom:18px; font-size:15px; }.portrait-story-poster.p1 { left:50%; transform:translateX(-50%); z-index:3; }.portrait-story-poster.p2 { left:0; top:92px; transform:rotate(-8deg); }.portrait-story-poster.p3 { right:0; top:92px; transform:rotate(8deg); }
+.story-person { color:#fff; background-image:linear-gradient(180deg,rgba(25,18,35,.04),rgba(25,18,35,.94)),var(--person-image); background-size:cover; background-position:center; }.story-person > div { margin-top:auto; }.story-person span { display:inline-flex; padding:7px 10px; border-radius:10px; background:rgba(255,255,255,.16); font:700 8px 'DM Mono',monospace; }.story-person small { display:block; margin-top:10px; font:700 8px 'DM Mono',monospace; opacity:.7; }.story-person h2 { font-size:38px; }.story-actor { background-position:center 25%; }
+.story-genre { color:#fff; text-align:center; background:radial-gradient(circle at 72% 28%,#8059cf,#38295d 38%,#171322 76%); }.story-genre > small { text-align:left; }.story-planet { width:225px; height:225px; margin:auto; border-radius:50%; background:url('./badge-assets/space.jpg') center/cover; box-shadow:0 0 55px rgba(151,108,232,.7),inset -28px -20px 45px rgba(9,5,19,.55); }.story-genre > b { color:#d5baff; font:700 9px 'DM Mono',monospace; }.story-genre h2 { font-size:37px; }
+.story-rating { color:#3c2d31; text-align:center; background:linear-gradient(145deg,#fff6ce,#f1c36e 52%,#e3946e); }.story-rating > small { text-align:left; }.story-score { width:195px; height:195px; display:grid; place-content:center; margin:auto; border:2px solid rgba(83,56,40,.14); border-radius:50%; box-shadow:0 0 0 18px rgba(255,255,255,.14),0 0 0 45px rgba(255,255,255,.08); }.story-score b { font-size:65px; line-height:.9; letter-spacing:-4px; }.story-score span { margin-top:12px; font:700 11px 'DM Mono',monospace; }.story-rating h2 { font-size:26px; }.story-rating p { margin-top:0; }
+.story-badges { color:#352b48; text-align:center; background:linear-gradient(155deg,#e8dcfb,#f8edf6 55%,#e4f2ef); }.story-badges > small { text-align:left; }.story-badges > div { display:flex; justify-content:center; align-items:flex-end; gap:13px; margin:auto 0; }.story-badges > div > span { width:88px; }.story-badges > div > span:nth-child(2) { transform:translateY(-26px); }.story-badges > div > span > span,.story-badges > div > span > div { width:82px; height:82px; display:block; }.story-badges b { display:block; margin-top:8px; font-size:7px; }.story-badges p { width:100%; }
+.story-final { color:#fff; background:linear-gradient(160deg,#2e2443,#5f427d 54%,#b36d8a); }.story-share-card { margin:auto 0 18px; padding:21px; border:1px solid rgba(255,255,255,.16); border-radius:26px; background:rgba(255,255,255,.1); backdrop-filter:blur(15px); }.story-share-card h2 { display:inline-block; margin-left:10px; vertical-align:top; font-size:22px; }.story-share-card > div { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:17px; }.story-share-card > div span { padding:10px 4px; border-radius:13px; background:rgba(255,255,255,.1); text-align:center; font:700 6px 'DM Mono',monospace; }.story-share-card > div b { display:block; margin-bottom:5px; font:800 16px 'Plus Jakarta Sans',sans-serif; }.story-share-card p { margin-top:14px; padding:13px; border-radius:14px; background:rgba(255,255,255,.08); font-size:9px; }.story-final > em { text-align:center; font-size:10px; opacity:.7; }
+@media(max-width:540px){.portrait-story-overlay{padding:0}.portrait-story-phone{width:100%;height:100dvh;min-height:620px;border:0;border-radius:0}.portrait-story-progress{top:14px}.portrait-story-close{top:31px}.portrait-story-slide{padding-top:68px}.portrait-story-nav{bottom:calc(14px + env(safe-area-inset-bottom))}.profile-sheet-shell{width:100%;max-width:none}}
+
 </style>
 </head>
 <body>
@@ -5636,7 +5984,7 @@ body:has(.app-tabbar-wrap) .toast { bottom: calc(env(safe-area-inset-bottom, 0px
 <div class="context-overlay" id="install-overlay" aria-hidden="true">
   <div class="context-sheet" role="dialog" aria-modal="true" aria-labelledby="install-title">
     <button class="context-handle" type="button" aria-label="Fermer"></button>
-    <img class="install-logo" src="./letop-icon-192.png?v=20260706-popcorn-v10" alt="Popcorn">
+    <img class="install-logo" src="./letop-icon-192.png?v=20260707-popcorn-v11" alt="Popcorn">
     <div class="install-title" id="install-title">Installer Popcorn</div>
     <div class="install-text" id="install-text"></div>
     <div class="install-steps" id="install-steps"></div>
@@ -5651,6 +5999,26 @@ body:has(.app-tabbar-wrap) .toast { bottom: calc(env(safe-area-inset-bottom, 0px
     <div class="install-title">Réglages</div>
     <div id="settings-content"></div>
     <button class="btn-secondary" id="btn-close-settings">Fermer</button>
+  </div>
+</div>
+
+<div class="context-overlay profile-overlay" id="profile-overlay" aria-hidden="true">
+  <div class="context-sheet profile-sheet-shell" role="dialog" aria-modal="true" aria-label="Profil cinéma">
+    <button class="context-handle" id="btn-close-profile" type="button" aria-label="Fermer"></button>
+    <div id="profile-sheet-content"></div>
+  </div>
+</div>
+
+<div class="portrait-story-overlay" id="portrait-story-overlay" aria-hidden="true">
+  <div class="portrait-story-phone" role="dialog" aria-modal="true" aria-label="Mon portrait cinéma">
+    <div class="portrait-story-progress" id="portrait-story-progress"></div>
+    <button class="portrait-story-close" id="btn-close-portrait-story" type="button" aria-label="Fermer">×</button>
+    <div class="portrait-story-slides" id="portrait-story-slides"></div>
+    <div class="portrait-story-nav">
+      <button id="btn-portrait-prev" type="button" aria-label="Précédent">‹</button>
+      <button id="btn-portrait-next" type="button">Suivant</button>
+      <button id="btn-portrait-share" type="button" hidden>Partager mon portrait ↗</button>
+    </div>
   </div>
 </div>
 
