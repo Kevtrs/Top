@@ -1568,7 +1568,7 @@ function updatePageScrollLock() {
   if (!pageNeedsScroll && window.scrollY !== 0) window.scrollTo(0, 0);
 }
 function canTouchScrollInside(target) {
-  const scrollable = target?.closest?.(".context-sheet, .reco-scroll, .profile-switcher-tab");
+  const scrollable = target?.closest?.(".context-sheet, .reco-scroll, .profile-switcher-tab, .profile-sheet, .profile-sheet-content, #profile-sheet-content, .profile-body, .profile-detail, .profile-overlay, .settings-sheet, .settings-content, #settings-content, .portrait-story-sheet, .portrait-story-content, .context-content");
   if (!scrollable) return false;
   return scrollable.scrollHeight > scrollable.clientHeight || scrollable.scrollWidth > scrollable.clientWidth;
 }
@@ -2140,6 +2140,7 @@ function renderTopTabContent() {
   const count = myRanked().length;
   return `
     ${renderCollectionIntro("CLASSEMENT", "Mon Top", `${count} film${count > 1 ? "s" : ""} classé${count > 1 ? "s" : ""}`, "top")}
+    <button class="portrait-wrapped-btn" id="btn-open-portrait-story" type="button"><span>✦</span><div><strong>Voir mon portrait cinéma</strong><small>Un carrousel de statistiques à partager</small></div><b>›</b></button>
     <div class="rank-list" id="rank-list"></div>`;
 }
 
@@ -2375,6 +2376,7 @@ function attachGlobalSearch() {
 function attachAppEvents() {
   document.getElementById("btn-settings")?.addEventListener("click", openSettingsSheet);
   document.getElementById("btn-open-my-profile")?.addEventListener("click", () => openProfileSheet(currentUser));
+  document.getElementById("btn-open-portrait-story")?.addEventListener("click", () => openPortraitStory(currentUser));
 
   document.querySelectorAll(".app-tab-item").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -3581,10 +3583,8 @@ function renderProfileSheetContent(profileId) {
       <div class="portrait-signature">${portraitSignatureRow("RÉALISATEUR FÉTICHE", stats.directors, "director")}${portraitSignatureRow("ACTEUR INCONTOURNABLE", stats.actors, "actor")}${portraitSignatureRow("UNIVERS DE PRÉDILECTION", stats.genres, "genre")}</div>
       <div class="portrait-section-title"><strong>Badges en vitrine</strong><span>${stats.badges.length} / 3</span></div>
       <div class="portrait-badges">${stats.badges.length ? stats.badges.map(badge => `<button data-badge-id="${escapeAttr(badge.id)}" type="button">${challengeBadgeArtHtml(badge)}<small>${escapeHtml(badge.name)}</small></button>`).join("") : `<p>${isMe ? "Choisis jusqu'à trois badges gagnés depuis l'onglet Badges." : "Aucun badge mis en avant pour le moment."}</p>`}</div>
-      <button class="portrait-wrapped-btn" id="btn-open-portrait-story" type="button"><span>✦</span><div><strong>Voir ${isMe ? "mon" : "son"} portrait cinéma</strong><small>Un carrousel de statistiques à partager</small></div><b>›</b></button>
       ${!isMe ? `<button class="btn-secondary portrait-view-top" id="btn-profile-view-top" type="button">Voir le Top de ${escapeHtml(stats.profile.name)}</button>` : ""}
     </div></div>`;
-  document.getElementById("btn-open-portrait-story")?.addEventListener("click", () => openPortraitStory(profileId));
   document.getElementById("btn-profile-view-top")?.addEventListener("click", () => { closeProfileSheet(); activeTab = "friends"; viewingUser = profileId; renderPage(); });
   zone.querySelectorAll(".portrait-badges button").forEach(button => button.addEventListener("click", () => { closeProfileSheet(); activeTab = "badges"; renderPage(); setTimeout(() => openBadgeMoviesSheet(button.dataset.badgeId), 60); }));
 }
@@ -5908,7 +5908,22 @@ body:has(.app-tabbar-wrap) .toast { bottom: calc(env(safe-area-inset-bottom, 0px
 .profile-header-btn .avatar-poster, .profile-header-btn .avatar-initial-sm { width: 32px !important; height: 32px !important; }
 .profile-sheet-shell { max-width: 520px; padding: 0; overflow: hidden; background: #F7F4FB; }
 .profile-sheet-shell > .context-handle { position: absolute; z-index: 5; left: 50%; top: 8px; transform: translateX(-50%); background: rgba(255,255,255,.72); }
-#profile-sheet-content { max-height: min(88vh, 820px); overflow-y: auto; overscroll-behavior: contain; }
+#profile-sheet-content { max-height: min(88vh, 820px); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.profile-sheet,
+.profile-sheet-content,
+.profile-body,
+.profile-detail,
+.settings-sheet,
+.settings-content,
+#settings-content,
+.portrait-story-sheet,
+.portrait-story-content,
+.context-content {
+  max-height: min(82dvh, 720px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
 .portrait-sheet { --portrait-hero: linear-gradient(135deg,#6d4da7,#2c253b); }
 .portrait-hero { min-height: 235px; position: relative; display: flex; align-items: flex-end; padding: 54px 22px 20px; color: #fff; background-image: linear-gradient(180deg,rgba(25,18,38,.08),rgba(25,18,38,.94)),var(--portrait-hero); background-size: cover; background-position: center 28%; }
 .portrait-identity { display: flex; align-items: flex-end; gap: 13px; width: 100%; }
