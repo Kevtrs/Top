@@ -2456,6 +2456,7 @@ function renderApp() {
           <div class="brand-title">${appLogoHtml("brand-logo", "icon")}Popcorn</div>
         </div>
         <div class="header-btns">
+          <button class="icon-pill" id="btn-open-my-profile" type="button" title="Mon profil" aria-label="Voir mon profil">${profileAvatarHtml(currentUser, 28)}</button>
           <button class="icon-pill" id="btn-settings" type="button" title="Réglages" aria-label="Ouvrir les réglages">${tabIconHtml("settings")}</button>
         </div>
       </div>
@@ -2574,6 +2575,7 @@ function attachGlobalSearch() {
 
 function attachAppEvents() {
   document.getElementById("btn-settings")?.addEventListener("click", openSettingsSheet);
+  document.getElementById("btn-open-my-profile")?.addEventListener("click", () => openProfileSheet(currentUser));
 
   document.querySelectorAll(".app-tab-item").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -2634,8 +2636,7 @@ function attachAppEvents() {
 
   document.querySelectorAll(".profile-chip, .friend-card").forEach(el => {
     el.addEventListener("click", () => {
-      viewingUser = el.dataset.id;
-      renderPage();
+      openProfileSheet(el.dataset.id);
     });
   });
 
@@ -3162,6 +3163,7 @@ function closeOverlayElement(overlay) {
     "movie-action-overlay": closeMovieActionSheet,
     "install-overlay": closeInstallSheet,
     "settings-overlay": closeSettingsSheet,
+    "profile-overlay": closeProfileSheet,
     "cinema-challenges-overlay": closeChallengesSheet,
     "badge-movies-overlay": closeBadgeMoviesSheet,
     "badge-unlock-overlay": closeBadgeUnlockSheet,
@@ -3689,6 +3691,71 @@ async function runConfirmedAction() {
     showToast("Action impossible pour le moment");
   } finally {
     if (button) button.disabled = false;
+  }
+}
+
+function openProfileSheet(profileId) {
+  if (!profileId) return;
+  const overlay = document.getElementById("profile-overlay");
+  if (!overlay) return;
+  renderProfileSheetContent(profileId);
+  overlay.classList.add("show");
+  scheduleScrollLockUpdate();
+}
+function closeProfileSheet() {
+  document.getElementById("profile-overlay")?.classList.remove("show");
+  scheduleScrollLockUpdate();
+}
+function renderProfileSheetContent(profileId) {
+  const zone = document.getElementById("profile-sheet-content");
+  if (!zone) return;
+  const profile = profileById(profileId) || fallbackProfile(profileId);
+  const isMe = profileId === currentUser;
+  const topCount = (allRankings[profileId] || []).length;
+  const watchedCount = (allWatched[profileId] || []).length;
+  const watchlistCount = (allWatchlist[profileId] || []).length;
+  const showcase = profile.showcaseBadges || [];
+  zone.innerHTML = `
+    <div class="profile-sheet-header">
+      ${profileAvatarHtml(profileId, 84)}
+      <strong>${escapeHtml(profile.name)}</strong>
+      ${isMe ? `<small>C'est toi</small>` : ""}
+    </div>
+    <div class="profile-sheet-stats">
+      <div><strong>${topCount}</strong><span>Top</span></div>
+      <div><strong>${watchedCount}</strong><span>Vus</span></div>
+      <div><strong>${watchlistCount}</strong><span>À voir</span></div>
+    </div>
+    <div class="profile-sheet-trophies">
+      <div class="badges-showcase-label">Vitrine de badges</div>
+      ${showcase.length
+        ? `<div class="profile-trophy-row">${showcase.map(b => `
+            <button class="profile-trophy-item" data-challenge-id="${escapeAttr(b.id)}" type="button" aria-label="${escapeAttr(b.name)}">
+              ${challengeBadgeArtHtml(b)}
+              <small>${escapeHtml(b.name)}</small>
+            </button>`).join("")}</div>`
+        : `<p class="profile-trophy-empty">${isMe ? "Épingle jusqu'à 3 badges depuis l'onglet Badges pour les montrer ici." : `${escapeHtml(profile.name)} n'a mis aucun badge en avant pour l'instant.`}</p>`}
+    </div>
+    <button class="btn-primary" id="btn-profile-view-top" type="button">${isMe ? "Voir mon Top" : `Voir le Top de ${escapeHtml(profile.name)}`}</button>
+  `;
+  document.getElementById("btn-profile-view-top")?.addEventListener("click", () => {
+    closeProfileSheet();
+    if (isMe) {
+      activeTab = "top";
+      viewingUser = currentUser;
+    } else {
+      activeTab = "friends";
+      viewingUser = profileId;
+    }
+    renderPage();
+  });
+  if (isMe) {
+    zone.querySelectorAll(".profile-trophy-item").forEach(btn => {
+      btn.addEventListener("click", () => {
+        closeProfileSheet();
+        openBadgeMoviesSheet(btn.dataset.challengeId);
+      });
+    });
   }
 }
 
@@ -4741,6 +4808,9 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target.id === "settings-overlay") closeSettingsSheet();
   });
   document.getElementById("btn-close-settings").addEventListener("click", closeSettingsSheet);
+  document.getElementById("profile-overlay").addEventListener("click", (e) => {
+    if (e.target.id === "profile-overlay") closeProfileSheet();
+  });
   document.getElementById("cinema-challenges-overlay").addEventListener("click", (e) => {
     if (e.target.id === "cinema-challenges-overlay") closeChallengesSheet();
   });
@@ -5862,6 +5932,26 @@ body.no-page-scroll #root {
   background: rgba(246,244,252,0.78); border-radius: 18px; padding: 6px; margin: 0 4px 10px;
   box-shadow: inset 3px 3px 8px rgba(180,170,220,0.18), inset -3px -3px 8px rgba(255,255,255,0.85);
 }
+.profile-sheet { max-width: 480px; text-align: center; }
+.profile-sheet-header { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 10px 0 4px; }
+.profile-sheet-header strong { font-size: 20px; font-weight: 800; }
+.profile-sheet-header small { color: var(--ink-soft); font-size: 11px; font-weight: 700; }
+.profile-sheet-stats {
+  display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin: 16px 4px;
+  background: rgba(246,244,252,0.78); border-radius: 18px; padding: 12px 6px;
+  box-shadow: inset 3px 3px 8px rgba(180,170,220,0.18), inset -3px -3px 8px rgba(255,255,255,0.85);
+}
+.profile-sheet-stats > div strong { display: block; font-size: 18px; font-weight: 800; }
+.profile-sheet-stats > div span { display: block; margin-top: 2px; color: var(--ink-soft); font-size: 10.5px; font-weight: 700; text-transform: uppercase; }
+.profile-sheet-trophies { margin: 8px 4px 18px; text-align: left; }
+.profile-trophy-row { display: flex; gap: 14px; justify-content: center; }
+.profile-trophy-item {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; width: 68px;
+  border: none; background: none; padding: 0; cursor: pointer;
+}
+.profile-trophy-item > *:first-child { width: 56px; height: 56px; }
+.profile-trophy-item small { font-size: 10px; font-weight: 700; color: var(--ink-soft); text-align: center; line-height: 1.25; }
+.profile-trophy-empty { color: var(--ink-soft); font-size: 12.5px; font-weight: 650; text-align: center; line-height: 1.5; }
 .settings-item {
   width: 100%; border: none; background: transparent; font-family: 'Plus Jakarta Sans', sans-serif; text-align: left;
 }
@@ -5996,6 +6086,13 @@ body:has(.app-tabbar-wrap) .toast { bottom: calc(env(safe-area-inset-bottom, 0px
     <div class="install-title">Réglages</div>
     <div id="settings-content"></div>
     <button class="btn-secondary" id="btn-close-settings">Fermer</button>
+  </div>
+</div>
+
+<div class="context-overlay" id="profile-overlay" aria-hidden="true">
+  <div class="context-sheet profile-sheet" role="dialog" aria-modal="true" aria-label="Profil">
+    <button class="context-handle" type="button" aria-label="Fermer"></button>
+    <div id="profile-sheet-content"></div>
   </div>
 </div>
 
