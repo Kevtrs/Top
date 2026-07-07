@@ -5949,7 +5949,7 @@ body:has(.app-tabbar-wrap) .toast { bottom: calc(env(safe-area-inset-bottom, 0px
 .portrait-badges button > span,.portrait-badges button > div { display: block; width: 52px; height: 52px; margin: auto; }
 .portrait-badges small { display: block; margin-top: 5px; font-size: 7px; font-weight: 800; line-height: 1.15; }
 .portrait-badges p { margin: auto; color: var(--ink-soft); font-size: 10px; text-align: center; }
-.portrait-wrapped-btn { width: 100%; display: grid; grid-template-columns: 38px 1fr auto; gap: 11px; align-items: center; margin-top: 20px; padding: 13px; border: 0; border-radius: 18px; color: #fff; text-align: left; font-family: inherit; background: linear-gradient(135deg,#3c304f,#8b67d7 62%,#d2789b); box-shadow: 0 12px 28px rgba(94,67,135,.24); }
+.portrait-wrapped-btn { width: calc(100% - 40px); max-width: 880px; display: grid; grid-template-columns: 38px 1fr auto; gap: 11px; align-items: center; margin: 20px auto 0; padding: 13px; border: 0; border-radius: 18px; color: #fff; text-align: left; font-family: inherit; background: linear-gradient(135deg,#3c304f,#8b67d7 62%,#d2789b); box-shadow: 0 12px 28px rgba(94,67,135,.24); }
 .portrait-wrapped-btn > span { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 13px; background: rgba(255,255,255,.14); font-size: 20px; }
 .portrait-wrapped-btn strong { display: block; font-size: 12px; }.portrait-wrapped-btn small { display: block; margin-top: 3px; font-size: 8px; opacity: .7; }.portrait-wrapped-btn > b { font-size: 22px; }
 .portrait-view-top { margin-top: 10px; }
