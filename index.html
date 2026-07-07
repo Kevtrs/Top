@@ -3081,12 +3081,12 @@ async function loadMovieActionDetails(movie) {
     const trailer = bestTrailerFromDetails(details);
     const url = trailerUrl(trailer);
     zone.innerHTML = `
-      ${watchProvidersHtml(watchProvidersFromDetails(details), movie.title)}
       <div class="movie-detail-box">
         <div class="movie-detail-label">Synopsis</div>
         <p>${escapeHtml(overview)}</p>
         ${url ? `<button class="movie-trailer-btn" data-url="${escapeAttr(url)}" type="button">Voir la bande-annonce</button>` : ""}
-      </div>`;
+      </div>
+      ${watchProvidersHtml(watchProvidersFromDetails(details), movie.title)}`;
     zone.querySelector(".movie-trailer-btn")?.addEventListener("click", (e) => {
       e.stopPropagation();
       window.open(e.currentTarget.dataset.url, "_blank", "noopener,noreferrer");
@@ -3119,7 +3119,6 @@ function openMovieActionSheet(movie, origin = "search", index = null) {
   `;
 
   document.getElementById("movie-action-items").innerHTML = `
-    <div id="movie-action-details"></div>
     <button class="context-item movie-action-item ${inTop ? "is-done" : ""}" data-action="top" type="button" ${inTop ? "disabled" : ""}>
       ${surfaceIconHtml(inTop ? "check" : "crown", "movie-action-icon")}
       <span class="movie-action-copy"><strong>${inTop ? "Dans ton Top" : "Ajouter au Top"}</strong><small>${inTop ? "Action déjà effectuée" : "Ajouté en dernière position"}</small></span>
@@ -3139,6 +3138,8 @@ function openMovieActionSheet(movie, origin = "search", index = null) {
     ${origin === "top" ? `<div class="context-divider"></div><button class="context-item movie-action-item danger" data-action="remove-top" type="button">${surfaceIconHtml("trash", "movie-action-icon")}<span class="movie-action-copy"><strong>Retirer du Top</strong></span></button>` : ""}
     ${origin === "watched" ? `<div class="context-divider"></div><button class="context-item movie-action-item danger" data-action="remove-watched" type="button">${surfaceIconHtml("trash", "movie-action-icon")}<span class="movie-action-copy"><strong>Retirer des vus</strong></span></button>` : ""}
     ${origin === "watchlist" ? `<div class="context-divider"></div><button class="context-item movie-action-item danger" data-action="remove-watchlist" type="button">${surfaceIconHtml("trash", "movie-action-icon")}<span class="movie-action-copy"><strong>Retirer de À voir</strong></span></button>` : ""}
+    <div class="context-divider"></div>
+    <div id="movie-action-details"></div>
   `;
 
   document.getElementById("movie-action-overlay").classList.add("show");
