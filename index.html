@@ -3686,7 +3686,7 @@ async function sharePortraitStory() {
   const file = blob ? new File([blob], `portrait-cinema-${slugify(stats.profile.name)}.png`, { type: "image/png" }) : null;
   try {
     if (file && navigator.canShare?.({ files: [file] })) {
-      await navigator.share({ files: [file], title: `Le portrait cinéma de ${stats.profile.name}`, text: "Découvre mon univers cinéma sur Popcorn." });
+      await navigator.share({ files: [file], title: `Le portrait cinéma de ${stats.profile.name}`, text: `Découvre mon univers cinéma sur Popcorn. ${APP_PUBLIC_URL}`, url: APP_PUBLIC_URL });
     } else if (navigator.share) {
       await navigator.share({ title: `Le portrait cinéma de ${stats.profile.name}`, text: `🎬 ${stats.profile.name} · ${stats.watched.length} films vus · ${stats.genres?.name || "cinéphile"}`, url: APP_PUBLIC_URL });
     } else {
