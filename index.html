@@ -2491,30 +2491,72 @@ function renderCreateProfileScreen(canCancel = false) {
       btn.innerHTML = `<span class="loading-spin"></span>`;
       btn.disabled = true;
       const existing = profileById(secureUser.uid) || {};
-      const updated = {
-        name,
-        initial: name[0]?.toUpperCase() || "?",
-        color: existing.color || PROFILE_COLORS[0],
-        privacy: existing.privacy || PRIVACY_MODE_GROUP,
-        primaryGroupId: activeGroupId,
-        updatedAt: Date.now()
+      const isFreshProfile = !existing.legacyProfileId
+        && (allRankings[secureUser.uid] || []).length === 0
+        && (allWatched[secureUser.uid] || []).length === 0
+        && (allWatchlist[secureUser.uid] || []).length === 0;
+
+      const finalizeSecureProfile = async recovered => {
+        const hasRecoveredMovies = !!recovered && (recovered.rankings.length || recovered.watched.length || recovered.watchlist.length);
+        const potentialLegacyId = slugify(name);
+        const updated = {
+          name,
+          initial: (hasRecoveredMovies && recovered.profile?.initial) || name[0]?.toUpperCase() || "?",
+          color: (hasRecoveredMovies && recovered.profile?.color) || existing.color || PROFILE_COLORS[0],
+          showcaseBadges: (hasRecoveredMovies && recovered.profile?.showcaseBadges) || existing.showcaseBadges || [],
+          privacy: existing.privacy || PRIVACY_MODE_GROUP,
+          primaryGroupId: activeGroupId,
+          legacyProfileId: hasRecoveredMovies ? potentialLegacyId : (existing.legacyProfileId || null),
+          updatedAt: Date.now()
+        };
+        try {
+          await setDoc(doc(db, "users", secureUser.uid), updated, { merge: true });
+          if (hasRecoveredMovies) {
+            await Promise.all([
+              replaceSecureMovieCollection(secureUser.uid, "rankings", recovered.rankings),
+              replaceSecureMovieCollection(secureUser.uid, "watched", recovered.watched),
+              replaceSecureMovieCollection(secureUser.uid, "watchlist", recovered.watchlist)
+            ]);
+            localStorage.setItem(LEGACY_PROFILE_KEY, potentialLegacyId);
+          }
+          currentUser = secureUser.uid;
+          viewingUser = currentUser;
+          creatingProfile = false;
+          onboardingNewUser = hasRecoveredMovies ? null : currentUser;
+          localStorage.setItem("letop_user", currentUser);
+          localStorage.setItem(USER_NAME_KEY, name);
+          PROFILES = [...PROFILES.filter(profile => profile.id !== currentUser), normalizeProfileData({ ...existing, ...updated }, currentUser)];
+          if (hasRecoveredMovies) {
+            showToast(`Bon retour ${name}, on a retrouvé tes films`);
+            renderPage();
+          } else {
+            renderOnboarding();
+          }
+        } catch (error) {
+          submitting = false;
+          btn.textContent = "Continuer";
+          btn.disabled = false;
+          showToast("Impossible de créer le profil");
+        }
       };
-      try {
-        await setDoc(doc(db, "users", secureUser.uid), updated, { merge: true });
-        currentUser = secureUser.uid;
-        viewingUser = currentUser;
-        creatingProfile = false;
-        onboardingNewUser = currentUser;
-        localStorage.setItem("letop_user", currentUser);
-        localStorage.setItem(USER_NAME_KEY, name);
-        PROFILES = [...PROFILES.filter(profile => profile.id !== currentUser), normalizeProfileData({ ...existing, ...updated }, currentUser)];
-        renderOnboarding();
-      } catch (error) {
-        submitting = false;
-        btn.textContent = "Continuer";
-        btn.disabled = false;
-        showToast("Impossible de créer le profil");
+
+      if (isFreshProfile && slugify(name)) {
+        const recovered = await readLegacyProfileData(slugify(name)).catch(() => null);
+        const foundMovies = recovered && (recovered.rankings.length || recovered.watched.length || recovered.watchlist.length);
+        if (foundMovies) {
+          submitting = false;
+          btn.textContent = "Continuer";
+          btn.disabled = false;
+          openConfirmSheet({
+            title: `On a retrouvé un profil "${name}"`,
+            message: `${recovered.rankings.length} film(s) classé(s), ${recovered.watched.length} vu(s). C'est bien toi ? Sinon, un nouveau profil vide sera créé.`,
+            confirmLabel: "Oui, c'est moi",
+            onConfirm: async () => { submitting = true; await finalizeSecureProfile(recovered); }
+          });
+          return;
+        }
       }
+      await finalizeSecureProfile(null);
       return;
     }
     let id = slugify(name);
