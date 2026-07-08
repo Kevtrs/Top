@@ -275,6 +275,48 @@ const SAGA_CHALLENGE_DEFS = [
     description: "Échappe au destin dans les six films sortis.",
     backdropPath: "/7isarjYDEKZ5t1CgcvbuqEUby8P.jpg",
     movieIds: [9532, 9358, 9286, 19912, 55779, 574475]
+  },
+  {
+    id: "saga-shrek", name: "Les ogres, c'est comme les oignons", symbol: "ogre",
+    description: "Traverse les quatre films du marécage de Fort Fort Lointain.",
+    backdropPath: "/sRvXNDItGlWCqtO3j6wks52FmbD.jpg",
+    movieIds: [808, 809, 810, 10192]
+  },
+  {
+    id: "saga-terminator", name: "Je reviendrai", symbol: "cyborg",
+    description: "Traverse les six films sortis de la saga Terminator.",
+    backdropPath: "/izkMjmhauFx9DjoBQqM5sM5WAwE.jpg",
+    movieIds: [218, 280, 296, 534, 87101, 290859]
+  },
+  {
+    id: "saga-men-in-black", name: "Les hommes en noir", symbol: "saucer",
+    description: "Protège la Terre dans la trilogie originale des Men in Black.",
+    backdropPath: "/o9puyKpayQoX8ikIaYtf2PfKv3.jpg",
+    movieIds: [607, 608, 41154]
+  },
+  {
+    id: "saga-oceans", name: "Le casse parfait", symbol: "spade",
+    description: "Monte le casse dans la trilogie Ocean's de Soderbergh.",
+    backdropPath: "/ncoqdHs1poUaBqyKic9YI8ai7MP.jpg",
+    movieIds: [161, 163, 298]
+  },
+  {
+    id: "saga-kingsman", name: "Un gentleman ne recule jamais", symbol: "umbrella",
+    description: "Sers le Kingsman à travers ses trois films.",
+    backdropPath: "/qzUIOTk0E3F1zjvYjcBRTKUTgf9.jpg",
+    movieIds: [207703, 343668, 476669]
+  },
+  {
+    id: "saga-despicable-me", name: "Bananaaa", symbol: "goggles",
+    description: "Suis Gru et ses Minions sur les quatre films.",
+    backdropPath: "/2XSeKDmIa2KxaiJy4J9e8FrIZhk.jpg",
+    movieIds: [20352, 93456, 324852, 519182]
+  },
+  {
+    id: "saga-dragons", name: "Comment dresser ton dragon", symbol: "dragon",
+    description: "Termine la trilogie animée Dragons.",
+    backdropPath: "/59vDC1BuEQvti24OMr0ZvtAK6R1.jpg",
+    movieIds: [10191, 82702, 166428]
   }
 ].map(def => ({
   ...def,
@@ -1544,7 +1586,14 @@ function sagaSymbolSvg(symbol) {
     stones: '<path d="M14 39 10 21l7-12 7 9 7-9 7 12-4 18Z"/><circle cx="17" cy="23" r="2"/><circle cx="24" cy="22" r="2"/><circle cx="31" cy="23" r="2"/><circle cx="20" cy="30" r="2"/><circle cx="28" cy="30" r="2"/>',
     barrel: '<circle cx="24" cy="24" r="18"/><circle cx="24" cy="24" r="8"/><path d="M24 6v10M24 32v10M6 24h10M32 24h10M11 11l7 7M30 30l7 7M37 11l-7 7M18 30l-7 7"/>',
     spiral: '<path d="M38 25c0 9-7 16-16 16S7 34 7 25 14 9 24 9c8 0 14 6 14 13 0 8-6 13-13 13-6 0-11-5-11-10 0-6 4-10 10-10 5 0 8 4 8 8 0 4-3 7-7 7-3 0-5-2-5-5"/>',
-    crack: '<path d="M24 5 19 17l6 4-8 8 6 3-5 11M26 20l9-7M20 30l9 7M12 22l8 2"/>'
+    crack: '<path d="M24 5 19 17l6 4-8 8 6 3-5 11M26 20l9-7M20 30l9 7M12 22l8 2"/>',
+    ogre: '<path d="M24 8c9 0 14 7 14 16s-5 16-14 16-14-7-14-16S15 8 24 8Z"/><path d="M24 15c5 0 8 4 8 9s-3 9-8 9-8-4-8-9 3-9 8-9Z"/><path d="M24 21c2 0 3 2 3 3s-1 3-3 3-3-2-3-3 1-3 3-3Z"/>',
+    cyborg: '<circle cx="24" cy="24" r="17"/><circle cx="24" cy="24" r="7"/><path d="M24 3v8M24 37v8M3 24h8M37 24h8"/><path d="m11 11 6 6M31 31 37 37M37 11l-6 6M13 31l-6 6"/>',
+    saucer: '<ellipse cx="24" cy="26" rx="18" ry="6"/><path d="M13 22c2-8 7-13 11-13s9 5 11 13"/><circle cx="24" cy="15" r="3"/><path d="M8 26c0 4 7 7 16 7s16-3 16-7"/>',
+    spade: '<path d="M24 6c7 8 14 14 14 21a9 9 0 0 1-14 7 9 9 0 0 1-14-7c0-7 7-13 14-21Z"/><path d="M24 32v10"/><path d="m18 42 6-4 6 4"/>',
+    umbrella: '<path d="M6 24a18 18 0 0 1 36 0Z"/><path d="M24 24v18a4 4 0 0 1-6 3"/><path d="M24 6v4"/>',
+    goggles: '<circle cx="15" cy="24" r="9"/><circle cx="33" cy="24" r="9"/><path d="M24 24h0"/><path d="M9 18c-3 0-5 2-5 5M39 18c3 0 5 2 5 5"/>',
+    dragon: '<path d="M6 30c6-2 10-8 12-16 2 6 3 11 2 16 5-3 9-9 10-17 3 7 2 14-3 20-6 7-14 9-21 6Z"/><path d="M20 30c2 3 6 4 9 2"/>'
   };
   return `<svg viewBox="0 0 48 48" aria-hidden="true">${symbols[symbol] || symbols.stars}</svg>`;
 }
