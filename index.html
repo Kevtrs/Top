@@ -16,7 +16,9 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, doc, setDoc, deleteDoc, getDocs, onSnapshot, collection, enableNetwork, disableNetwork } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, doc, setDoc, deleteDoc, getDoc, getDocs, onSnapshot, collection, query, where, limit, writeBatch, arrayUnion, arrayRemove, enableNetwork, disableNetwork } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getAuth, setPersistence, indexedDBLocalPersistence, signInAnonymously, onAuthStateChanged, deleteUser } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js";
 import { getMessaging, getToken, isSupported as isMessagingSupported, onMessage } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js";
 
 // ─── CONFIG ───────────────────────────────────────────────────────
@@ -302,8 +304,11 @@ const sagaMovieDetailsCache = new Map();
 
 const app = initializeApp(FIREBASE_CONFIG);
 const db  = getFirestore(app);
+const auth = getAuth(app);
+const functions = getFunctions(app, "europe-west1");
 
-let currentUser  = localStorage.getItem("letop_user") || null;
+const legacyProfileId = localStorage.getItem("letop_user") || null;
+let currentUser  = null;
 let viewingUser  = currentUser;
 let allRankings  = {};
 let allWatched = {};
@@ -351,10 +356,24 @@ let pendingConfirmAction = null;
 let badgeUnlockQueue = [];
 let activeBadgeUnlockId = null;
 let overlayHistoryProgrammaticBack = false;
+let authReady = false;
+let authSetupError = null;
+let secureUser = null;
+let activeGroupId = null;
+let activeGroup = null;
+let secureDataReady = false;
+let secureDataUnsubs = [];
+const secureSubscribedMembers = new Set();
+let legacyFallbackMode = false;
+let legacyListenersStarted = false;
+let legacyDataUnsubs = [];
 
 const PENDING_PUSH_TOKEN_KEY = "letop_pending_push_token";
 const PUSH_BOUND_KEY = "letop_push_bound";
 const USER_NAME_KEY = "letop_user_name";
+const LEGACY_PROFILE_KEY = "popcorn_legacy_profile_id";
+const PRIVACY_MODE_GROUP = "group";
+const PRIVACY_MODE_PRIVATE = "private";
 const repairingProfileIds = new Set();
 const publishedProfileIds = new Set();
 
@@ -386,8 +405,341 @@ document.addEventListener("visibilitychange", async () => {
   }
 });
 
+function randomSecureId(prefix = "") {
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  return `${prefix}${Array.from(bytes, value => value.toString(36).padStart(2, "0")).join("")}`;
+}
+
+function secureCollectionRef(userId, type) {
+  return collection(db, "users", userId, type);
+}
+
+function secureMoviePayload(movie, position = 0) {
+  return {
+    ...simplifyMovie(movie),
+    ...movie,
+    ownerUid: secureUser?.uid || currentUser,
+    groupId: activeGroupId,
+    schemaVersion: 2,
+    position,
+    updatedAt: Date.now()
+  };
+}
+
+async function replaceSecureMovieCollection(userId, type, movies) {
+  if (!secureUser || userId !== secureUser.uid) throw new Error("permission-denied");
+  const ref = secureCollectionRef(userId, type);
+  const existing = await getDocs(ref);
+  const incomingIds = new Set(movies.map(movie => String(movie.id)));
+  const operations = [];
+  existing.docs.forEach(snapshot => {
+    if (!incomingIds.has(snapshot.id)) operations.push({ type: "delete", ref: snapshot.ref });
+  });
+  movies.forEach((movie, position) => {
+    operations.push({ type: "set", ref: doc(ref, String(movie.id)), data: secureMoviePayload(movie, position) });
+  });
+  for (let offset = 0; offset < operations.length; offset += 450) {
+    const batch = writeBatch(db);
+    operations.slice(offset, offset + 450).forEach(operation => {
+      if (operation.type === "delete") batch.delete(operation.ref);
+      else batch.set(operation.ref, operation.data, { merge: true });
+    });
+    await batch.commit();
+  }
+}
+
+async function readLegacyProfileData(profileId) {
+  if (!profileId) return null;
+  try {
+    const [profileSnap, rankingSnap, watchedSnap, watchlistSnap] = await Promise.all([
+      getDoc(doc(db, "profiles", profileId)),
+      getDoc(doc(db, "rankings", profileId)),
+      getDoc(doc(db, "watched", profileId)),
+      getDoc(doc(db, "watchlist", profileId))
+    ]);
+    const profile = profileSnap.exists() ? normalizeProfileData(profileSnap.data(), profileId) : null;
+    return {
+      profile,
+      rankings: rankingSnap.exists() ? rankingSnap.data().movies || [] : [],
+      watched: watchedSnap.exists() ? watchedSnap.data().movies || [] : [],
+      watchlist: watchlistSnap.exists() ? watchlistSnap.data().movies || [] : []
+    };
+  } catch (error) {
+    console.warn("Legacy migration unavailable", error);
+    return null;
+  }
+}
+
+async function createPrivateCircle(uid, name) {
+  const groupId = randomSecureId("grp_");
+  const group = {
+    id: groupId,
+    name: `Cercle de ${name || "Popcorn"}`,
+    ownerUid: uid,
+    memberIds: [uid],
+    schemaVersion: 2,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+  await setDoc(doc(db, "groups", groupId), group);
+  return group;
+}
+
+async function joinPrivateCircle(inviteCode, profile) {
+  if (!inviteCode || !secureUser) return profile;
+  const inviteSnap = await getDoc(doc(db, "invites", inviteCode));
+  if (!inviteSnap.exists()) throw new Error("invite-not-found");
+  const invite = inviteSnap.data();
+  if (invite.expiresAt && invite.expiresAt < Date.now()) throw new Error("invite-expired");
+  const groupRef = doc(db, "groups", invite.groupId);
+  const groupSnap = await getDoc(groupRef);
+  if (!groupSnap.exists()) throw new Error("group-not-found");
+  await setDoc(groupRef, {
+    memberIds: arrayUnion(secureUser.uid),
+    joinCode: inviteCode,
+    updatedAt: Date.now()
+  }, { merge: true });
+  const updated = {
+    ...profile,
+    primaryGroupId: invite.groupId,
+    privacy: PRIVACY_MODE_GROUP,
+    updatedAt: Date.now()
+  };
+  await setDoc(doc(db, "users", secureUser.uid), updated, { merge: true });
+  if (profile.primaryGroupId && profile.primaryGroupId !== invite.groupId) {
+    try {
+      const previousGroupRef = doc(db, "groups", profile.primaryGroupId);
+      const previousGroup = await getDoc(previousGroupRef);
+      if (previousGroup.exists() && previousGroup.data().ownerUid === secureUser.uid && (previousGroup.data().memberIds || []).length === 1) {
+        await deleteDoc(previousGroupRef);
+      }
+    } catch (error) {}
+  }
+  history.replaceState({}, "", `${location.pathname}${location.search.replace(/([?&])invite=[^&]*&?/, "$1").replace(/[?&]$/, "")}${location.hash}`);
+  showToast("Tu as rejoint le cercle privé");
+  return updated;
+}
+
+async function createCircleInvite() {
+  if (!secureUser || !activeGroupId) return;
+  const code = randomSecureId("inv_");
+  await setDoc(doc(db, "invites", code), {
+    code,
+    groupId: activeGroupId,
+    createdBy: secureUser.uid,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000
+  });
+  const inviteUrl = `${APP_PUBLIC_URL}?invite=${encodeURIComponent(code)}`;
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: "Rejoins mon cercle Popcorn", text: "Compare nos Tops cinéma sur Popcorn.", url: inviteUrl });
+    } else {
+      await navigator.clipboard.writeText(inviteUrl);
+      showToast("Invitation copiée");
+    }
+  } catch (error) {
+    if (error.name !== "AbortError") {
+      await navigator.clipboard.writeText(inviteUrl).catch(() => {});
+      showToast("Invitation copiée");
+    }
+  }
+}
+
+async function setProfilePrivacy(mode) {
+  if (!secureUser || ![PRIVACY_MODE_GROUP, PRIVACY_MODE_PRIVATE].includes(mode)) return;
+  await setDoc(doc(db, "users", secureUser.uid), { privacy: mode, updatedAt: Date.now() }, { merge: true });
+  const profile = profileById(currentUser);
+  if (profile) profile.privacy = mode;
+  showToast(mode === PRIVACY_MODE_PRIVATE ? "Profil privé" : "Visible par ton cercle");
+}
+
+async function ensureSecureAccount(firebaseUser) {
+  secureUser = firebaseUser;
+  const userRef = doc(db, "users", firebaseUser.uid);
+  const userSnap = await getDoc(userRef);
+  if (userSnap.exists()) return normalizeProfileData(userSnap.data(), firebaseUser.uid);
+
+  const rememberedLegacyId = localStorage.getItem(LEGACY_PROFILE_KEY) || legacyProfileId;
+  const legacy = await readLegacyProfileData(rememberedLegacyId);
+  const storedName = localStorage.getItem(USER_NAME_KEY) || "";
+  const name = legacy?.profile?.name || storedName || "Profil";
+  const group = await createPrivateCircle(firebaseUser.uid, name);
+  const profile = {
+    id: firebaseUser.uid,
+    name,
+    initial: legacy?.profile?.initial || name[0]?.toUpperCase() || "?",
+    color: legacy?.profile?.color || PROFILE_COLORS[0],
+    showcaseBadges: legacy?.profile?.showcaseBadges || [],
+    privacy: PRIVACY_MODE_GROUP,
+    primaryGroupId: group.id,
+    legacyProfileId: rememberedLegacyId || null,
+    schemaVersion: 2,
+    createdAt: legacy?.profile?.createdAt || Date.now(),
+    updatedAt: Date.now()
+  };
+  await setDoc(userRef, profile);
+  activeGroupId = group.id;
+  activeGroup = group;
+  if (legacy) {
+    await replaceSecureMovieCollection(firebaseUser.uid, "rankings", legacy.rankings);
+    await replaceSecureMovieCollection(firebaseUser.uid, "watched", legacy.watched);
+    await replaceSecureMovieCollection(firebaseUser.uid, "watchlist", legacy.watchlist);
+  }
+  if (rememberedLegacyId) localStorage.setItem(LEGACY_PROFILE_KEY, rememberedLegacyId);
+  return profile;
+}
+
+function stopSecureDataListeners() {
+  secureDataUnsubs.forEach(unsubscribe => {
+    try { unsubscribe(); } catch (error) {}
+  });
+  secureDataUnsubs = [];
+  secureSubscribedMembers.clear();
+}
+
+function listenSecureMovieCollection(userId, type, onData) {
+  return onSnapshot(secureCollectionRef(userId, type), snapshot => {
+    const movies = snapshot.docs
+      .map(movieDoc => ({ ...movieDoc.data(), id: Number(movieDoc.id) || movieDoc.data().id }))
+      .sort((a, b) => (a.position || 0) - (b.position || 0));
+    onData(movies);
+  }, error => {
+    console.warn(`Secure ${type} listener failed`, error);
+    onData([]);
+  });
+}
+
+function subscribeSecureMember(userId) {
+  if (!userId || secureSubscribedMembers.has(userId)) return;
+  secureSubscribedMembers.add(userId);
+  secureDataUnsubs.push(onSnapshot(doc(db, "users", userId), snapshot => {
+    if (!snapshot.exists()) return;
+    const profile = normalizeProfileData(snapshot.data(), snapshot.id);
+    PROFILES = [...PROFILES.filter(item => item.id !== userId), profile];
+    PROFILE_INDEX = PROFILES;
+    profilesSynced = true;
+    if (currentUser && !onboardingNewUser) renderPage();
+  }, error => {
+    if (userId !== currentUser) {
+      PROFILES = PROFILES.filter(item => item.id !== userId);
+      delete allRankings[userId];
+      delete allWatched[userId];
+      delete allWatchlist[userId];
+      if (viewingUser === userId) viewingUser = currentUser;
+      renderPage();
+    } else {
+      console.warn("Secure profile listener failed", error);
+    }
+  }));
+  secureDataUnsubs.push(listenSecureMovieCollection(userId, "rankings", movies => {
+    allRankings = { ...allRankings, [userId]: movies };
+    rankingsSynced = true;
+    if (currentUser && !onboardingNewUser) renderPage();
+  }));
+  secureDataUnsubs.push(listenSecureMovieCollection(userId, "watched", movies => {
+    allWatched = { ...allWatched, [userId]: movies };
+    if (currentUser && !onboardingNewUser) renderPage();
+  }));
+  secureDataUnsubs.push(listenSecureMovieCollection(userId, "watchlist", movies => {
+    allWatchlist = { ...allWatchlist, [userId]: movies };
+    if (currentUser && !onboardingNewUser) renderPage();
+  }));
+}
+
+async function startSecureData(profile) {
+  stopSecureDataListeners();
+  const pendingInvite = new URLSearchParams(location.search).get("invite");
+  if (pendingInvite) {
+    try {
+      profile = await joinPrivateCircle(pendingInvite, profile);
+    } catch (error) {
+      showToast(error.message === "invite-expired" ? "Invitation expirée" : "Invitation invalide");
+    }
+  }
+  currentUser = secureUser.uid;
+  viewingUser = currentUser;
+  localStorage.setItem("letop_user", currentUser);
+  localStorage.setItem(USER_NAME_KEY, profile.name);
+  activeGroupId = profile.primaryGroupId;
+  const groupSnap = activeGroupId ? await getDoc(doc(db, "groups", activeGroupId)) : null;
+  activeGroup = groupSnap?.exists() ? { id: groupSnap.id, ...groupSnap.data() } : await createPrivateCircle(currentUser, profile.name);
+  if (!profile.primaryGroupId) {
+    activeGroupId = activeGroup.id;
+    await setDoc(doc(db, "users", currentUser), { primaryGroupId: activeGroupId, privacy: PRIVACY_MODE_GROUP, updatedAt: Date.now() }, { merge: true });
+  }
+  PROFILES = [];
+  PROFILE_INDEX = [];
+  DATA_PROFILES = [];
+  allRankings = {};
+  allWatched = {};
+  allWatchlist = {};
+  const initialRankingSnapshot = await getDocs(secureCollectionRef(currentUser, "rankings"));
+  allRankings[currentUser] = initialRankingSnapshot.docs
+    .map(movieDoc => ({ ...movieDoc.data(), id: Number(movieDoc.id) || movieDoc.data().id }))
+    .sort((a, b) => (a.position || 0) - (b.position || 0));
+  const memberIds = [...new Set(activeGroup.memberIds || [currentUser])];
+  memberIds.forEach(subscribeSecureMember);
+  secureDataUnsubs.push(onSnapshot(doc(db, "groups", activeGroupId), snapshot => {
+    if (!snapshot.exists()) return;
+    activeGroup = { id: snapshot.id, ...snapshot.data() };
+    const allowedMembers = new Set(activeGroup.memberIds || [currentUser]);
+    PROFILES = PROFILES.filter(profileItem => allowedMembers.has(profileItem.id));
+    Object.keys(allRankings).forEach(uid => { if (!allowedMembers.has(uid)) delete allRankings[uid]; });
+    Object.keys(allWatched).forEach(uid => { if (!allowedMembers.has(uid)) delete allWatched[uid]; });
+    Object.keys(allWatchlist).forEach(uid => { if (!allowedMembers.has(uid)) delete allWatchlist[uid]; });
+    allowedMembers.forEach(subscribeSecureMember);
+  }));
+  secureDataUnsubs.push(onSnapshot(secureCollectionRef(currentUser, "inbox"), snapshot => {
+    incomingRecos = snapshot.docs.map(item => ({ docId: item.id, ...item.data() }));
+    if (currentUser && !onboardingNewUser) renderPage();
+  }));
+  secureDataReady = true;
+  profilesSynced = true;
+  rankingsSynced = true;
+  const hasMovies = (allRankings[currentUser] || []).length > 0;
+  creatingProfile = profile.name === "Profil";
+  onboardingNewUser = !creatingProfile && !hasMovies ? currentUser : null;
+  renderPage();
+}
+
+async function bootstrapFirebaseAuth() {
+  try {
+    await setPersistence(auth, indexedDBLocalPersistence);
+    onAuthStateChanged(auth, async firebaseUser => {
+      try {
+        if (!firebaseUser) {
+          await signInAnonymously(auth);
+          return;
+        }
+        const profile = await ensureSecureAccount(firebaseUser);
+        authReady = true;
+        await startSecureData(profile);
+      } catch (error) {
+        authSetupError = error;
+        authReady = true;
+        console.error("Secure account bootstrap failed", error);
+        startLegacyDataFallback(error);
+        renderPage();
+      }
+    });
+  } catch (error) {
+    authSetupError = error;
+    authReady = true;
+    startLegacyDataFallback(error);
+    renderPage();
+  }
+}
+
 async function saveRankingToCloud(userId, rankedArray) {
   if (!userId) return;
+  if (secureUser) {
+    allRankings = { ...allRankings, [userId]: rankedArray };
+    updateCollectionSummaries();
+    await replaceSecureMovieCollection(userId, "rankings", rankedArray);
+    return;
+  }
   if (userId === currentUser) await ensureProfileInCloud(userId);
   const profile = profilePayload(userId);
   allRankings = { ...allRankings, [userId]: rankedArray };
@@ -398,12 +750,22 @@ async function saveWatchedToCloud(userId, watchedArray) {
   if (!userId) return;
   allWatched = { ...allWatched, [userId]: watchedArray };
   updateCollectionSummaries();
+  if (secureUser) {
+    await replaceSecureMovieCollection(userId, "watched", watchedArray);
+    return;
+  }
   if (userId === currentUser) await ensureProfileInCloud(userId);
   const profile = profilePayload(userId);
   await setDoc(doc(db, "watched", userId), { movies: watchedArray, updatedAt: Date.now(), ...profileMetaPayload(profile) }, { merge: true });
 }
 async function saveWatchlistToCloud(userId, watchlistArray) {
   if (!userId) return;
+  if (secureUser) {
+    allWatchlist = { ...allWatchlist, [userId]: watchlistArray };
+    updateCollectionSummaries();
+    await replaceSecureMovieCollection(userId, "watchlist", watchlistArray);
+    return;
+  }
   if (userId === currentUser) await ensureProfileInCloud(userId);
   const profile = profilePayload(userId);
   allWatchlist = { ...allWatchlist, [userId]: watchlistArray };
@@ -620,9 +982,31 @@ async function sendPushViaWorker(fcmToken, fromName, movie) {
 }
 async function sendRecoToUser(toUserId, movie) {
   const recoId = `${toUserId}_${movie.id}_${Date.now()}`;
-  await setDoc(doc(db, "sentRecos", recoId), {
+  if (secureUser) {
+    try {
+      const sendRecommendation = httpsCallable(functions, "sendRecommendation");
+      const result = await sendRecommendation({ toUserId, movie: simplifyMovie(movie), groupId: activeGroupId, recoId });
+      return { recoId, tokenCount: result.data?.tokenCount || 0, sentCount: result.data?.sentCount || 0 };
+    } catch (error) {
+      console.warn("Secure push function unavailable; inbox fallback used", error);
+      await setDoc(doc(db, "users", toUserId, "inbox", recoId), {
+        to: toUserId,
+        from: currentUser,
+        groupId: activeGroupId,
+        movie: simplifyMovie(movie),
+        seen: false,
+        createdAt: Date.now()
+      });
+      return { recoId, tokenCount: 0, sentCount: 0, tokenError: true };
+    }
+  }
+  const recoRef = secureUser
+    ? doc(db, "users", toUserId, "inbox", recoId)
+    : doc(db, "sentRecos", recoId);
+  await setDoc(recoRef, {
     to: toUserId,
     from: currentUser,
+    groupId: activeGroupId,
     movie: simplifyMovie(movie),
     seen: false,
     createdAt: Date.now()
@@ -631,7 +1015,10 @@ async function sendRecoToUser(toUserId, movie) {
   const fromProfile = profileById(currentUser);
   const fromName = fromProfile?.name || "Quelqu'un";
   try {
-    const tokenSnap = await getDocs(collection(db, "pushTokens", toUserId, "tokens"));
+    const tokenRef = secureUser
+      ? collection(db, "users", toUserId, "pushTokens")
+      : collection(db, "pushTokens", toUserId, "tokens");
+    const tokenSnap = await getDocs(tokenRef);
     const tokens = tokenSnap.docs.map(d => d.data().token).filter(Boolean);
     const results = await Promise.all(tokens.map(token => sendPushViaWorker(token, fromName, movie)));
     return {
@@ -651,11 +1038,62 @@ function listenIncomingRecos(cb) {
     cb(all);
   }, () => cb([]));
 }
+function startLegacyDataFallback(error) {
+  if (legacyListenersStarted) return;
+  legacyListenersStarted = true;
+  legacyFallbackMode = true;
+  secureUser = null;
+  currentUser = legacyProfileId;
+  viewingUser = currentUser;
+  console.warn("Popcorn is using the temporary legacy data mode", error);
+
+  legacyDataUnsubs.push(listenProfiles((list, metadata) => {
+    PROFILES = list;
+    const serverConfirmed = !metadata.fromCache && !metadata.failed;
+    if (serverConfirmed) profilesServerConfirmed = true;
+    profilesSynced = true;
+    if (currentUser && serverConfirmed && !list.some(profile => profile.id === currentUser)) ensureProfileInCloud(currentUser);
+    if (currentUser && !viewingUser) viewingUser = currentUser;
+    renderPage();
+  }));
+  legacyDataUnsubs.push(listenProfileIndex(list => {
+    PROFILE_INDEX = list;
+    renderPage();
+  }));
+  legacyDataUnsubs.push(listenAllRankings(data => {
+    allRankings = data;
+    rankingsSynced = true;
+    renderPage();
+  }));
+  legacyDataUnsubs.push(listenAllWatched(data => {
+    allWatched = data;
+    if (profilesSynced && rankingsSynced) renderPage();
+  }));
+  legacyDataUnsubs.push(listenAllWatchlist(data => {
+    allWatchlist = data;
+    if (profilesSynced && rankingsSynced) renderPage();
+  }));
+  legacyDataUnsubs.push(listenIncomingRecos(data => {
+    incomingRecos = data;
+    if (profilesSynced && rankingsSynced) renderPage();
+  }));
+  setTimeout(() => {
+    profilesSynced = true;
+    rankingsSynced = true;
+    renderPage();
+  }, 3500);
+}
 async function markRecoSeen(docId) {
-  await setDoc(doc(db, "sentRecos", docId), { seen: true }, { merge: true });
+  const recoRef = secureUser
+    ? doc(db, "users", currentUser, "inbox", docId)
+    : doc(db, "sentRecos", docId);
+  await setDoc(recoRef, { seen: true }, { merge: true });
 }
 async function dismissReco(docId) {
-  await deleteDoc(doc(db, "sentRecos", docId));
+  const recoRef = secureUser
+    ? doc(db, "users", currentUser, "inbox", docId)
+    : doc(db, "sentRecos", docId);
+  await deleteDoc(recoRef);
 }
 function removeRecoLocally(docId) {
   incomingRecos = incomingRecos.filter(r => r.docId !== docId);
@@ -1385,7 +1823,10 @@ function ensureRecoPrefsListener() {
   }
   recoPrefsUser = currentUser;
   recoPrefs = loadLocalRecoPrefs(currentUser);
-  recoPrefsUnsub = onSnapshot(doc(db, "recoPrefs", currentUser), snap => {
+  const prefsRef = secureUser
+    ? doc(db, "users", currentUser, "private", "recoPrefs")
+    : doc(db, "recoPrefs", currentUser);
+  recoPrefsUnsub = onSnapshot(prefsRef, snap => {
     if (recoPrefsUser !== currentUser) return;
     if (!snap.exists()) return;
     recoPrefs = normalizeRecoPrefs(snap.data());
@@ -1413,7 +1854,10 @@ function normalizeProfileData(profile, fallbackId) {
     initial: profile?.initial || profile?.profileInitial || name.trim()[0]?.toUpperCase() || "?",
     color: profile?.color || profile?.profileColor || "var(--lav)",
     createdAt: profile?.createdAt || profile?.profileCreatedAt || 0,
-    showcaseBadges: Array.isArray(profile?.showcaseBadges) ? profile.showcaseBadges.slice(0, 3) : []
+    showcaseBadges: Array.isArray(profile?.showcaseBadges) ? profile.showcaseBadges.slice(0, 3) : [],
+    privacy: profile?.privacy || PRIVACY_MODE_GROUP,
+    primaryGroupId: profile?.primaryGroupId || null,
+    legacyProfileId: profile?.legacyProfileId || null
   };
 }
 function hasProfile(profileId) {
@@ -1810,6 +2254,20 @@ function tabIconHtml(icon) {
       <path d="M11 18h2"></path>
     </svg>`;
   }
+  if (icon === "lock") {
+    return `<svg ${common}>
+      <rect x="5" y="10" width="14" height="10" rx="3"></rect>
+      <path d="M8 10V7a4 4 0 0 1 8 0v3"></path>
+    </svg>`;
+  }
+  if (icon === "share") {
+    return `<svg ${common}>
+      <circle cx="18" cy="5" r="3"></circle>
+      <circle cx="6" cy="12" r="3"></circle>
+      <circle cx="18" cy="19" r="3"></circle>
+      <path d="m8.6 10.5 6.8-4M8.6 13.5l6.8 4"></path>
+    </svg>`;
+  }
   if (icon === "trash") {
     return `<svg ${common}>
       <path d="M3 6h18"></path>
@@ -1887,6 +2345,38 @@ function renderCreateProfileScreen(canCancel = false) {
     if (submitting) return;
     const name = input.value.trim();
     if (!name) { showToast("Entre un prénom"); return; }
+    if (secureUser) {
+      submitting = true;
+      const btn = document.getElementById("btn-confirm-name");
+      btn.innerHTML = `<span class="loading-spin"></span>`;
+      btn.disabled = true;
+      const existing = profileById(secureUser.uid) || {};
+      const updated = {
+        name,
+        initial: name[0]?.toUpperCase() || "?",
+        color: existing.color || PROFILE_COLORS[0],
+        privacy: existing.privacy || PRIVACY_MODE_GROUP,
+        primaryGroupId: activeGroupId,
+        updatedAt: Date.now()
+      };
+      try {
+        await setDoc(doc(db, "users", secureUser.uid), updated, { merge: true });
+        currentUser = secureUser.uid;
+        viewingUser = currentUser;
+        creatingProfile = false;
+        onboardingNewUser = currentUser;
+        localStorage.setItem("letop_user", currentUser);
+        localStorage.setItem(USER_NAME_KEY, name);
+        PROFILES = [...PROFILES.filter(profile => profile.id !== currentUser), normalizeProfileData({ ...existing, ...updated }, currentUser)];
+        renderOnboarding();
+      } catch (error) {
+        submitting = false;
+        btn.textContent = "Continuer";
+        btn.disabled = false;
+        showToast("Impossible de créer le profil");
+      }
+      return;
+    }
     let id = slugify(name);
     if (!id) id = `profil-${Date.now()}`;
     const existingProfile = profileById(id);
@@ -2188,20 +2678,16 @@ function renderBadgesTabContent() {
 function renderFriendsTabContent(viewed) {
   const friends = friendProfiles();
   if (!friends.length) {
-    const knownCount = allKnownProfiles().length;
-    const topCount = Object.keys(allRankings).length;
-    const watchedCount = Object.keys(allWatched).length;
-    const watchlistCount = Object.keys(allWatchlist).length;
     return `
       ${renderCollectionIntro("PROCHES", "Amis", "Aucun autre profil synchronisé")}
       <div class="empty-state">
-        <div>Aucun autre compte synchronisé pour l'instant. Ouvre Popcorn sur l'autre appareil avec la dernière version pour qu'il publie son profil.</div>
-        <small>Synchro : ${knownCount} profil${knownCount > 1 ? "s" : ""} repéré${knownCount > 1 ? "s" : ""}, ${topCount} Top, ${watchedCount} Vus, ${watchlistCount} À voir.</small>
-        <button class="btn-secondary" id="btn-force-profile-sync" type="button">Synchroniser mon profil</button>
+        <div>Ton cercle est encore vide. Invite un proche pour comparer vos Tops et vous recommander des films.</div>
+        <button class="btn-primary" id="btn-invite-first-friend" type="button">Inviter un proche</button>
       </div>`;
   }
   return `
     ${renderCollectionIntro("PROCHES", "Amis", `${friends.length} profil${friends.length > 1 ? "s" : ""} dans le groupe`)}
+    <button class="btn-secondary friends-invite-btn" id="btn-invite-friend" type="button">Inviter dans mon cercle</button>
     <div class="friend-grid">
       ${friends.map(p => `
         <button class="friend-card ${p.id === viewingUser ? "active" : ""}" data-id="${escapeAttr(p.id)}" style="--pc:${escapeAttr(p.color)}" type="button">
@@ -2283,8 +2769,6 @@ function renderApp() {
 
 function renderPage() {
   applyPlatformMode();
-  ensureRecoPrefsListener();
-  if (currentUser) syncPendingPushTokenForCurrentUser();
   if (shouldForceInstallGate()) {
     renderInstallGate();
     return;
@@ -2293,6 +2777,24 @@ function renderPage() {
     renderNotificationGate();
     return;
   }
+  if (!authReady) {
+    renderBootLoading();
+    return;
+  }
+  if (authSetupError && !legacyFallbackMode) {
+    document.getElementById("root").innerHTML = `
+      <div class="onboard-screen auth-error-screen">
+        ${appLogoHtml("profile-logo-img")}
+        <div class="onboard-step">CONNEXION SÉCURISÉE</div>
+        <div class="onboard-title">Firebase Auth doit être activé</div>
+        <div class="onboard-text">Active la connexion anonyme dans Firebase Authentication, puis relance Popcorn. Tes anciennes données restent intactes.</div>
+        <button class="btn-primary" id="btn-auth-retry" type="button" style="margin-top:18px">Réessayer</button>
+      </div>`;
+    document.getElementById("btn-auth-retry")?.addEventListener("click", () => location.reload());
+    return;
+  }
+  ensureRecoPrefsListener();
+  if (currentUser) syncPendingPushTokenForCurrentUser();
   if (!profilesSynced && !creatingProfile && !onboardingNewUser) {
     renderBootLoading();
     return;
@@ -2437,13 +2939,8 @@ function attachAppEvents() {
     });
   });
 
-  document.getElementById("btn-force-profile-sync")?.addEventListener("click", async () => {
-    if (!currentUser) return;
-    publishedProfileIds.delete(currentUser);
-    await ensureProfileInCloud(currentUser);
-    showToast("Profil synchronisé");
-    renderPage();
-  });
+  document.getElementById("btn-invite-first-friend")?.addEventListener("click", createCircleInvite);
+  document.getElementById("btn-invite-friend")?.addEventListener("click", createCircleInvite);
 
   document.querySelectorAll(".profile-chip, .friend-card").forEach(el => {
     el.addEventListener("click", () => {
@@ -3503,6 +4000,10 @@ async function setShowcaseBadges(list) {
   const updated = { ...me, showcaseBadges: list.slice(0, 3), updatedAt: Date.now() };
   PROFILES = [...PROFILES.filter(profile => profile.id !== currentUser), updated];
   try {
+    if (secureUser) {
+      await setDoc(doc(db, "users", currentUser), { showcaseBadges: updated.showcaseBadges, updatedAt: updated.updatedAt }, { merge: true });
+      return;
+    }
     const writes = await Promise.allSettled([
       setDoc(doc(db, "profiles", currentUser), updated, { merge: true }),
       setDoc(doc(db, "profileIndex", currentUser), updated, { merge: true })
@@ -3711,6 +4212,16 @@ function renderSettingsSheetContent() {
       </div>
     </div>
     <div class="settings-group">
+      <button class="context-item settings-item" data-action="privacy" type="button">
+        ${surfaceIconHtml(me.privacy === PRIVACY_MODE_PRIVATE ? "lock" : "users", "settings-icon")}
+        <span><strong>Confidentialité</strong><small>${me.privacy === PRIVACY_MODE_PRIVATE ? "Moi uniquement" : "Visible par mon cercle privé"}</small></span>
+      </button>
+      <button class="context-item settings-item" data-action="invite" type="button">
+        ${surfaceIconHtml("share", "settings-icon")}
+        <span><strong>Inviter dans mon cercle</strong><small>Lien privé valable 7 jours</small></span>
+      </button>
+    </div>
+    <div class="settings-group">
       <button class="context-item settings-item" data-action="notifications" type="button">
         ${surfaceIconHtml(notificationIconName(), "settings-icon")}
         <span><strong>Notifications</strong><small>${notificationStatusLabel()}</small></span>
@@ -3724,10 +4235,6 @@ function renderSettingsSheetContent() {
       <button class="context-item settings-item" data-action="reset-top" type="button">
         ${surfaceIconHtml("crown", "settings-icon")}
         <span><strong>Vider mon Top</strong><small>Garde ton compte, enlève seulement le classement</small></span>
-      </button>
-      <button class="context-item settings-item" data-action="logout" type="button">
-        ${surfaceIconHtml("log-out", "settings-icon")}
-        <span><strong>Se déconnecter</strong><small>Masque ce profil sur cet appareil</small></span>
       </button>
       <button class="context-item settings-item danger" data-action="delete-account" type="button">
         ${surfaceIconHtml("trash", "settings-icon")}
@@ -3775,10 +4282,70 @@ async function deleteUserRecos(userId) {
   await Promise.all(docs.map(d => deleteDoc(d.ref)));
 }
 
+async function deleteSecureAccountData() {
+  if (!secureUser) return;
+  const uid = secureUser.uid;
+  try {
+    const deleteAccountCall = httpsCallable(functions, "deleteAccount");
+    await deleteAccountCall();
+    secureUser = null;
+    return;
+  } catch (error) {
+    console.warn("Secure delete function unavailable; client cleanup used", error);
+  }
+  const ownedCollections = ["rankings", "watched", "watchlist", "inbox", "pushTokens", "private"];
+  await Promise.all(ownedCollections.map(type => deleteDocsFrom(collection(db, "users", uid, type))));
+
+  const memberIds = activeGroup?.memberIds || [];
+  await Promise.all(memberIds.filter(memberId => memberId !== uid).map(async memberId => {
+    const sent = await getDocs(query(collection(db, "users", memberId, "inbox"), where("from", "==", uid)));
+    await Promise.all(sent.docs.map(item => deleteDoc(item.ref)));
+  }));
+
+  const invites = await getDocs(query(collection(db, "invites"), where("createdBy", "==", uid), limit(50)));
+  await Promise.all(invites.docs.map(invite => deleteDoc(invite.ref)));
+
+  if (activeGroupId) {
+    if (activeGroup?.ownerUid === uid && memberIds.length <= 1) {
+      await deleteDoc(doc(db, "groups", activeGroupId));
+    } else {
+      await setDoc(doc(db, "groups", activeGroupId), { memberIds: arrayRemove(uid), updatedAt: Date.now() }, { merge: true });
+    }
+  }
+
+  const legacyId = profileById(uid)?.legacyProfileId || localStorage.getItem(LEGACY_PROFILE_KEY);
+  if (legacyId) {
+    await Promise.allSettled([
+      deleteDoc(doc(db, "profiles", legacyId)),
+      deleteDoc(doc(db, "profileIndex", legacyId)),
+      deleteDoc(doc(db, "rankings", legacyId)),
+      deleteDoc(doc(db, "watched", legacyId)),
+      deleteDoc(doc(db, "watchlist", legacyId)),
+      deleteDoc(doc(db, "recoPrefs", legacyId)),
+      deleteDocsFrom(collection(db, "pushTokens", legacyId, "tokens")),
+      deleteDoc(doc(db, "pushTokens", legacyId))
+    ]);
+  }
+  await deleteDoc(doc(db, "users", uid));
+  await deleteUser(secureUser);
+}
+
 async function deleteCurrentAccount() {
   if (!currentUser) return;
   const userId = currentUser;
+  const wasSecure = !!secureUser;
 
+  if (wasSecure) {
+    try {
+      await deleteSecureAccountData();
+    } catch (error) {
+      console.error("Secure account deletion failed", error);
+      showToast("Suppression impossible. Réessaie en ligne.");
+      return;
+    }
+  }
+
+  stopSecureDataListeners();
   forgetLocalProfile(userId);
   delete allRankings[userId];
   delete allWatched[userId];
@@ -3793,10 +4360,13 @@ async function deleteCurrentAccount() {
   activeTab = "search";
   localStorage.removeItem("letop_user");
   localStorage.removeItem(USER_NAME_KEY);
+  localStorage.removeItem(LEGACY_PROFILE_KEY);
   localStorage.removeItem(PUSH_BOUND_KEY);
   closeSettingsSheet();
   showToast("Compte supprimé");
   renderPage();
+
+  if (wasSecure) return;
 
   try {
     await Promise.all([
@@ -3816,7 +4386,14 @@ async function deleteCurrentAccount() {
 }
 
 async function handleSettingsAction(action) {
-  if (action === "notifications") {
+  if (action === "privacy") {
+    const me = profileById(currentUser) || fallbackProfile(currentUser);
+    await setProfilePrivacy(me.privacy === PRIVACY_MODE_PRIVATE ? PRIVACY_MODE_GROUP : PRIVACY_MODE_PRIVATE);
+    renderSettingsSheetContent();
+  } else if (action === "invite") {
+    closeSettingsSheet();
+    await createCircleInvite();
+  } else if (action === "notifications") {
     closeSettingsSheet();
     await enablePushNotifications();
   } else if (action === "install") {
@@ -3835,8 +4412,6 @@ async function handleSettingsAction(action) {
       renderPage();
       }
     });
-  } else if (action === "logout") {
-    logoutCurrentUser();
   } else if (action === "delete-account") {
     const me = profileById(currentUser) || fallbackProfile(currentUser);
     openConfirmSheet({
@@ -3894,7 +4469,13 @@ async function savePushTokenForProfile(profileId, token) {
   if (!profileId || !token) return;
   const now = Date.now();
   const currentTokenId = tokenDocId(token);
-  await setDoc(doc(db, "pushTokens", profileId, "tokens", currentTokenId), {
+  const tokenDocRef = secureUser
+    ? doc(db, "users", profileId, "pushTokens", currentTokenId)
+    : doc(db, "pushTokens", profileId, "tokens", currentTokenId);
+  const tokenCollectionRef = secureUser
+    ? collection(db, "users", profileId, "pushTokens")
+    : collection(db, "pushTokens", profileId, "tokens");
+  await setDoc(tokenDocRef, {
     token,
     profileId,
     userAgent: navigator.userAgent,
@@ -3903,7 +4484,7 @@ async function savePushTokenForProfile(profileId, token) {
     createdAt: now
   }, { merge: true });
   try {
-    const snap = await getDocs(collection(db, "pushTokens", profileId, "tokens"));
+    const snap = await getDocs(tokenCollectionRef);
     await Promise.all(snap.docs
       .filter(d => d.id !== currentTokenId && d.data().userAgent === navigator.userAgent)
       .map(d => deleteDoc(d.ref)));
@@ -4385,7 +4966,10 @@ async function persistIgnoredMovie(movie, dislikedGenreWeights, toastText) {
   saveLocalRecoPrefs(userId, nextPrefs);
   showToast(toastText);
   try {
-    await setDoc(doc(db, "recoPrefs", userId), nextPrefs, { merge: true });
+    const prefsRef = secureUser
+      ? doc(db, "users", userId, "private", "recoPrefs")
+      : doc(db, "recoPrefs", userId);
+    await setDoc(prefsRef, nextPrefs, { merge: true });
   } catch (e) {
     showToast("Refus gardé sur cet appareil");
   }
@@ -4723,6 +5307,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }, { passive: false });
 
   setupPlatformOverlayHistory();
+  bootstrapFirebaseAuth();
   renderPage();
 
   setTimeout(() => {
@@ -4791,52 +5376,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const openOverlays = [...document.querySelectorAll(".context-overlay.show, .portrait-story-overlay.show")];
     const topOverlay = openOverlays[openOverlays.length - 1];
     if (topOverlay) closeOverlayElement(topOverlay);
-  });
-  listenProfiles((list, metadata) => {
-    PROFILES = list;
-    const serverConfirmed = !metadata.fromCache && !metadata.failed;
-    if (serverConfirmed) profilesServerConfirmed = true;
-    const currentProfileExists = !currentUser || list.some(p => p.id === currentUser);
-    const canRenderProfiles = list.length > 0 || serverConfirmed || metadata.failed;
-
-    // On ne considère pas un snapshot vide depuis le cache comme une vérité :
-    // au démarrage, il peut arriver avant la synchro serveur et ne doit pas
-    // effacer la session locale ni afficher l'écran "aucun profil".
-    if (!canRenderProfiles || (currentUser && !currentProfileExists && !serverConfirmed && !onboardingNewUser)) {
-      renderBootLoading();
-      return;
-    }
-
-    profilesSynced = true;
-    if (currentUser && serverConfirmed && !list.some(p => p.id === currentUser)) {
-      ensureProfileInCloud(currentUser);
-    }
-    if (!onboardingNewUser && serverConfirmed) normalizeActiveUsers();
-    if (currentUser && !viewingUser) viewingUser = currentUser;
-    renderPage();
-  });
-  listenProfileIndex(list => {
-    PROFILE_INDEX = list;
-    if (currentUser && !profileById(currentUser)) ensureProfileInCloud(currentUser);
-    if (profilesSynced && rankingsSynced && currentUser && !onboardingNewUser) renderPage();
-  });
-  listenAllRankings(data => {
-    allRankings = data;
-    rankingsSynced = true;
-    renderPage();
-  });
-  listenAllWatched(data => {
-    allWatched = data;
-    if (profilesSynced && rankingsSynced && currentUser && activeTab === "watched") renderWatchedList();
-    if (profilesSynced && rankingsSynced && currentUser && activeTab === "search" && recentExpanded) renderRecentFeed();
-  });
-  listenAllWatchlist(data => {
-    allWatchlist = data;
-    if (profilesSynced && rankingsSynced && currentUser && activeTab === "watchlist") renderWatchlist();
-  });
-  listenIncomingRecos(data => {
-    incomingRecos = data;
-    if (profilesSynced && rankingsSynced && currentUser && !onboardingNewUser) renderPage();
   });
 });
 </script>
@@ -5184,6 +5723,7 @@ body.no-page-scroll #root {
 .friend-card span:not(.avatar-initial-sm) { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .friend-card strong { font-size: 14px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .friend-card small { font-size: 11px; color: var(--ink-soft); font-weight: 700; line-height: 1.25; }
+.friends-invite-btn { margin: 0 20px 14px; width: calc(100% - 40px); border-radius: 16px; background: rgba(255,255,255,.56); }
 
 .search-wrap { width: calc(100% - 40px); max-width: 980px; margin: 0 auto; padding: 16px 0 4px; }
 .search-box {
@@ -6097,4 +6637,3 @@ body:has(.app-tabbar-wrap) .toast { bottom: calc(env(safe-area-inset-bottom, 0px
 <div class="toast" id="toast"></div>
 </body>
 </html>
-

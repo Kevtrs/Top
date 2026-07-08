@@ -1,0 +1,153 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function userData(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
+    }
+
+    function groupData(groupId) {
+      return get(/databases/$(database)/documents/groups/$(groupId)).data;
+    }
+
+    function isGroupMember(groupId) {
+      return signedIn()
+        && groupId is string
+        && exists(/databases/$(database)/documents/groups/$(groupId))
+        && groupData(groupId).memberIds.hasAny([request.auth.uid]);
+    }
+
+    function canReadUser(uid) {
+      return isSelf(uid)
+        || (userData(uid).privacy == 'group' && isGroupMember(userData(uid).primaryGroupId));
+    }
+
+    function validProfile(uid) {
+      return request.resource.data.id == uid
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 1
+        && request.resource.data.name.size() <= 40
+        && request.resource.data.privacy in ['group', 'private']
+        && request.resource.data.primaryGroupId is string;
+    }
+
+    function validMovieWrite(uid) {
+      return request.resource.data.ownerUid == uid
+        && request.resource.data.groupId == userData(uid).primaryGroupId
+        && request.resource.data.id is int
+        && request.resource.data.title is string;
+    }
+
+    match /users/{uid} {
+      allow create: if isSelf(uid) && validProfile(uid);
+      allow read: if canReadUser(uid);
+      allow update: if isSelf(uid)
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.createdAt == resource.data.createdAt
+        && validProfile(uid);
+      allow delete: if isSelf(uid);
+
+      match /{movieType}/{movieId} {
+        allow read: if movieType in ['rankings', 'watched', 'watchlist'] && canReadUser(uid);
+        allow create, update: if movieType in ['rankings', 'watched', 'watchlist']
+          && isSelf(uid)
+          && validMovieWrite(uid);
+        allow delete: if movieType in ['rankings', 'watched', 'watchlist'] && isSelf(uid);
+      }
+
+      match /inbox/{recoId} {
+        allow read: if isSelf(uid)
+          || (signedIn() && resource.data.from == request.auth.uid && isGroupMember(resource.data.groupId));
+        allow create: if signedIn()
+          && request.resource.data.from == request.auth.uid
+          && request.resource.data.to == uid
+          && request.resource.data.groupId == userData(uid).primaryGroupId
+          && isGroupMember(request.resource.data.groupId);
+        allow update: if isSelf(uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seen']);
+        allow delete: if isSelf(uid) || (signedIn() && resource.data.from == request.auth.uid);
+      }
+
+      match /pushTokens/{tokenId} {
+        allow read, create, update, delete: if isSelf(uid);
+      }
+
+      match /private/{documentId} {
+        allow read, write: if isSelf(uid);
+      }
+    }
+
+    match /groups/{groupId} {
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.memberIds == [request.auth.uid];
+      allow read: if signedIn() && resource.data.memberIds.hasAny([request.auth.uid]);
+      allow update: if signedIn() && (
+        (
+          resource.data.ownerUid == request.auth.uid
+          && request.resource.data.ownerUid == resource.data.ownerUid
+          && request.resource.data.memberIds.hasAny([request.auth.uid])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'memberIds', 'joinCode', 'updatedAt'])
+        )
+        || (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds', 'joinCode', 'updatedAt'])
+          && request.resource.data.memberIds.hasAll(resource.data.memberIds)
+          && request.resource.data.memberIds.size() == resource.data.memberIds.size() + 1
+          && request.resource.data.memberIds.hasAny([request.auth.uid])
+          && exists(/databases/$(database)/documents/invites/$(request.resource.data.joinCode))
+          && get(/databases/$(database)/documents/invites/$(request.resource.data.joinCode)).data.groupId == groupId
+          && get(/databases/$(database)/documents/invites/$(request.resource.data.joinCode)).data.expiresAt > request.time.toMillis()
+        )
+        || (
+          resource.data.ownerUid != request.auth.uid
+          && resource.data.memberIds.hasAny([request.auth.uid])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds', 'updatedAt'])
+          && resource.data.memberIds.hasAll(request.resource.data.memberIds)
+          && request.resource.data.memberIds.size() == resource.data.memberIds.size() - 1
+          && !request.resource.data.memberIds.hasAny([request.auth.uid])
+        )
+      );
+      allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /invites/{inviteCode} {
+      allow get: if signedIn();
+      allow list: if signedIn()
+        && resource.data.createdBy == request.auth.uid
+        && request.query.limit <= 50;
+      allow create: if signedIn()
+        && request.resource.data.createdBy == request.auth.uid
+        && isGroupMember(request.resource.data.groupId)
+        && request.resource.data.expiresAt > request.time.toMillis();
+      allow delete: if signedIn() && resource.data.createdBy == request.auth.uid;
+      allow update: if false;
+    }
+
+    // Migration temporaire : lecture ciblée du profil local, jamais de listing.
+    // À supprimer après le 1er août 2026, une fois les appareils migrés.
+    match /{legacyCollection}/{legacyId} {
+      allow get: if signedIn()
+        && legacyCollection in ['profiles', 'profileIndex', 'rankings', 'watched', 'watchlist', 'recoPrefs']
+        && request.time < timestamp.date(2026, 8, 1);
+      allow delete: if signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && userData(request.auth.uid).legacyProfileId == legacyId;
+      allow list, create, update: if false;
+    }
+
+    match /pushTokens/{legacyId}/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
