@@ -340,8 +340,12 @@ const DIRECTOR_BADGE_ASSETS = {
   1032: { photo: "./badge-assets/director-scorsese.jpg", position: "45% 15%" }
 };
 
+const ACTOR_CHALLENGE_OVERRIDES = {};
+const ACTOR_BADGE_ASSETS = {};
+
 let challengeMetadataLoading = false;
 let challengeFilmographyLoading = null;
+let challengeActorFilmographyLoading = null;
 const sagaMovieDetailsCache = new Map();
 
 const app = initializeApp(FIREBASE_CONFIG);
@@ -1462,6 +1466,72 @@ async function ensureDirectorFilmography(director) {
     challengeFilmographyLoading = null;
   }
 }
+function preferredActorFromSeen(seenMovies) {
+  const actors = new Map();
+  seenMovies.forEach(movie => (Array.isArray(movie.cast_top) ? movie.cast_top : []).forEach(person => {
+    const id = Number(person?.id);
+    if (!id || !person?.name) return;
+    const entry = actors.get(id) || { id, name: person.name, profilePath: person.profile_path || null, count: 0 };
+    if (!entry.profilePath && person.profile_path) entry.profilePath = person.profile_path;
+    entry.count += 1;
+    actors.set(id, entry);
+  }));
+  return [...actors.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))[0] || null;
+}
+function challengeActorFilmographyKey(actorId) {
+  return `letop_actor_films_${actorId}`;
+}
+function loadActorFilmography(actorId) {
+  try {
+    const cached = JSON.parse(localStorage.getItem(challengeActorFilmographyKey(actorId)) || "null");
+    if (!cached || !Array.isArray(cached.movies)) return null;
+    return cached;
+  } catch (e) {
+    return null;
+  }
+}
+async function ensureActorFilmography(actor) {
+  if (!actor?.id || challengeActorFilmographyLoading === actor.id) return;
+  const cached = loadActorFilmography(actor.id);
+  const override = ACTOR_CHALLENGE_OVERRIDES[actor.id];
+  const maxAge = 14 * 24 * 60 * 60 * 1000;
+  const cachedIds = new Set((cached?.movies || []).map(movie => Number(movie.id)));
+  const overrideIsCurrent = !override || override.movieIds.every(id => cachedIds.has(Number(id))) && cachedIds.size === override.movieIds.length;
+  const portraitIsCurrent = !!ACTOR_BADGE_ASSETS[actor.id] || !!actor.profilePath || cached?.portraitChecked === true;
+  if (cached && overrideIsCurrent && portraitIsCurrent && Date.now() - (Number(cached.updatedAt) || 0) < maxAge) return;
+
+  challengeActorFilmographyLoading = actor.id;
+  try {
+    const [data, person] = await Promise.all([
+      tmdbFetch(`/person/${actor.id}/movie_credits`),
+      tmdbFetch(`/person/${actor.id}`).catch(() => null)
+    ]);
+    const today = new Date().toISOString().slice(0, 10);
+    const unique = new Map();
+    (data.cast || [])
+      .filter(movie => movie.release_date && movie.release_date <= today)
+      .filter(movie => movie.poster_path && Number(movie.vote_count || 0) >= 50 && !movie.adult)
+      .forEach(movie => unique.set(Number(movie.id), movie));
+    const movies = (override
+      ? override.movieIds.map(id => unique.get(Number(id))).filter(Boolean)
+      : [...unique.values()]
+          .filter(movie => Number(movie.vote_count || 0) >= 300)
+          .slice(0, 12)
+    ).sort((a, b) => String(a.release_date).localeCompare(String(b.release_date)));
+    localStorage.setItem(challengeActorFilmographyKey(actor.id), JSON.stringify({
+      name: actor.name,
+      movies,
+      profilePath: person?.profile_path || actor.profilePath || cached?.profilePath || null,
+      portraitChecked: true,
+      updatedAt: Date.now()
+    }));
+    if (activeTab === "search" || activeTab === "badges") renderPagePreservingScroll();
+  } catch (e) {
+    // The actor challenge remains usable with a five-film target when TMDB is unavailable.
+  } finally {
+    challengeActorFilmographyLoading = null;
+  }
+}
 function baseChallengeMatchesMovie(movie, challenge) {
   if (!movie || !challenge) return false;
   if ((challenge.movieIds || []).includes(Number(movie.id))) return true;
@@ -1471,6 +1541,7 @@ function baseChallengeMatchesMovie(movie, challenge) {
     return year > 0 && year < challenge.beforeYear;
   }
   if (challenge.directorId && Number(movie.director_id || movie._directorId) === Number(challenge.directorId)) return true;
+  if (challenge.actorId && (movie.cast_top || []).some(person => Number(person.id) === Number(challenge.actorId))) return true;
   return false;
 }
 function cinemaChallengeCatalog() {
@@ -1538,6 +1609,45 @@ function cinemaChallengeCatalog() {
       suggestedMovies: filmography.filter(movie => !getAllMovieIdsForUser(currentUser).has(Number(movie.id))),
       available: true,
       completed: current >= threshold || unlockedIds.has(`director-${director.id}`)
+    });
+  }
+
+  const actor = preferredActorFromSeen(seenMovies);
+  if (actor) {
+    const cached = loadActorFilmography(actor.id);
+    const override = ACTOR_CHALLENGE_OVERRIDES[actor.id];
+    const cachedMovies = cached?.movies || [];
+    const filmography = override
+      ? override.movieIds.map(id => cachedMovies.find(movie => Number(movie.id) === Number(id))).filter(Boolean)
+      : cachedMovies;
+    const movieIds = filmography.map(movie => Number(movie.id));
+    const current = override && filmography.length
+      ? seenMovies.filter(movie => movieIds.includes(Number(movie.id))).length
+      : actor.count;
+    const threshold = override ? override.movieIds.length : 5;
+    const shortName = actor.name.trim().split(/\s+/).slice(-1)[0];
+    const actorAsset = ACTOR_BADGE_ASSETS[actor.id];
+    const actorPhoto = actorAsset?.photo
+      || (cached?.profilePath ? `${TMDB_PROFILE}${cached.profilePath}` : null)
+      || (actor.profilePath ? `${TMDB_PROFILE}${actor.profilePath}` : "./badge-assets/camera.jpg");
+    base.unshift({
+      id: `actor-${actor.id}`,
+      art: "actor",
+      group: "auteurs",
+      name: override?.name || `Fidèle à ${shortName}`,
+      description: override ? "Complète ses dix films les plus marquants." : "Suis-le de film en film.",
+      targetLabel: override ? `${threshold} films principaux` : "5 films avec le même acteur",
+      threshold,
+      current,
+      actorId: actor.id,
+      actorName: actor.name,
+      badgePhoto: actorPhoto,
+      badgeShape: "actor",
+      badgePosition: actorAsset?.position || "50% 15%",
+      movieIds,
+      suggestedMovies: filmography.filter(movie => !getAllMovieIdsForUser(currentUser).has(Number(movie.id))),
+      available: true,
+      completed: current >= threshold || unlockedIds.has(`actor-${actor.id}`)
     });
   }
   return base;
@@ -5024,6 +5134,8 @@ async function ensureChallengeMetadata() {
   if (!queue.length) {
     const director = preferredDirectorFromSeen(challengeSeenMovies());
     if (director) ensureDirectorFilmography(director);
+    const actor = preferredActorFromSeen(challengeSeenMovies());
+    if (actor) ensureActorFilmography(actor);
     return;
   }
 
@@ -6185,6 +6297,11 @@ body.no-page-scroll #root {
   clip-path: polygon(12% 0,88% 0,100% 14%,94% 25%,100% 36%,94% 50%,100% 64%,94% 76%,100% 88%,88% 100%,12% 100%,0 88%,6% 76%,0 64%,6% 50%,0 36%,6% 25%,0 14%);
 }
 .cinema-photo-badge.shape-director::after { background: rgba(35,27,50,.08); }
+.cinema-photo-badge.shape-actor {
+  width: 91%; height: 91%; margin: auto; border-radius: 50%;
+  clip-path: polygon(50% 0%,61% 7%,74% 2%,80% 13%,93% 15%,94% 28%,100% 38%,92% 47%,100% 56%,93% 66%,91% 79%,78% 78%,71% 89%,59% 83%,50% 92%,41% 83%,29% 89%,22% 78%,9% 79%,7% 66%,0% 56%,8% 47%,0% 38%,6% 28%,7% 15%,20% 13%,26% 2%,39% 7%);
+}
+.cinema-photo-badge.shape-actor::after { background: rgba(35,27,50,.08); }
 .cinema-saga-art {
   width: 100%; height: 100%; position: relative; overflow: hidden;
   background-image: linear-gradient(155deg, rgba(30,25,48,.05), rgba(30,25,48,.7)), var(--saga-image);
