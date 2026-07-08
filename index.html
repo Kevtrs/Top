@@ -331,6 +331,7 @@ let pendingActionIndex = null;
 let portraitProfileId = null;
 let portraitSlideIndex = 0;
 let portraitMetadataLoading = false;
+let pendingActionBadgeId = null;
 let suppressNextRankClick = false;
 let onboardingNewUser = null;
 let incomingRecos = [];
@@ -389,7 +390,7 @@ window.addEventListener("appinstalled", () => {
   applyPlatformMode();
   const toast = document.getElementById("toast");
   if (toast) showToast("Popcorn est installé");
-  renderPage();
+  renderPagePreservingScroll();
 });
 
 document.addEventListener("visibilitychange", async () => {
@@ -401,7 +402,7 @@ document.addEventListener("visibilitychange", async () => {
   try { await enableNetwork(db); } catch(e) {}
   if (document.getElementById("root")) {
     applyPlatformMode();
-    renderPage();
+    renderPagePreservingScroll();
   }
 });
 
@@ -620,7 +621,7 @@ function subscribeSecureMember(userId) {
     PROFILES = [...PROFILES.filter(item => item.id !== userId), profile];
     PROFILE_INDEX = PROFILES;
     profilesSynced = true;
-    if (currentUser && !onboardingNewUser) renderPage();
+    if (currentUser && !onboardingNewUser) renderPagePreservingScroll();
   }, error => {
     if (userId !== currentUser) {
       PROFILES = PROFILES.filter(item => item.id !== userId);
@@ -628,7 +629,7 @@ function subscribeSecureMember(userId) {
       delete allWatched[userId];
       delete allWatchlist[userId];
       if (viewingUser === userId) viewingUser = currentUser;
-      renderPage();
+      renderPagePreservingScroll();
     } else {
       console.warn("Secure profile listener failed", error);
     }
@@ -636,15 +637,20 @@ function subscribeSecureMember(userId) {
   secureDataUnsubs.push(listenSecureMovieCollection(userId, "rankings", movies => {
     allRankings = { ...allRankings, [userId]: movies };
     rankingsSynced = true;
-    if (currentUser && !onboardingNewUser) renderPage();
+    if (!currentUser || onboardingNewUser) return;
+    if (activeTab === "top" || activeTab === "friends") renderRanked();
+    if (activeTab === "search" && recentExpanded) renderRecentFeed();
   }));
   secureDataUnsubs.push(listenSecureMovieCollection(userId, "watched", movies => {
     allWatched = { ...allWatched, [userId]: movies };
-    if (currentUser && !onboardingNewUser) renderPage();
+    if (!currentUser || onboardingNewUser) return;
+    if (activeTab === "watched" && userId === currentUser) renderWatchedList();
+    if (activeTab === "search" && recentExpanded) renderRecentFeed();
+    if (activeTab === "badges" && userId === currentUser) refreshBadgesTabIfActive();
   }));
   secureDataUnsubs.push(listenSecureMovieCollection(userId, "watchlist", movies => {
     allWatchlist = { ...allWatchlist, [userId]: movies };
-    if (currentUser && !onboardingNewUser) renderPage();
+    if (currentUser && !onboardingNewUser && userId === currentUser && activeTab === "watchlist") renderWatchlist();
   }));
 }
 
@@ -693,7 +699,7 @@ async function startSecureData(profile) {
   }));
   secureDataUnsubs.push(onSnapshot(secureCollectionRef(currentUser, "inbox"), snapshot => {
     incomingRecos = snapshot.docs.map(item => ({ docId: item.id, ...item.data() }));
-    if (currentUser && !onboardingNewUser) renderPage();
+    if (currentUser && !onboardingNewUser) renderPagePreservingScroll();
   }));
   secureDataReady = true;
   profilesSynced = true;
@@ -1054,28 +1060,36 @@ function startLegacyDataFallback(error) {
     profilesSynced = true;
     if (currentUser && serverConfirmed && !list.some(profile => profile.id === currentUser)) ensureProfileInCloud(currentUser);
     if (currentUser && !viewingUser) viewingUser = currentUser;
-    renderPage();
+    renderPagePreservingScroll();
   }));
   legacyDataUnsubs.push(listenProfileIndex(list => {
     PROFILE_INDEX = list;
-    renderPage();
+    renderPagePreservingScroll();
   }));
   legacyDataUnsubs.push(listenAllRankings(data => {
     allRankings = data;
+    const firstSync = !rankingsSynced;
     rankingsSynced = true;
-    renderPage();
+    if (firstSync || !profilesSynced || onboardingNewUser) {
+      renderPage();
+      return;
+    }
+    if (currentUser && (activeTab === "top" || activeTab === "friends")) renderRanked();
+    if (currentUser && activeTab === "search" && recentExpanded) renderRecentFeed();
   }));
   legacyDataUnsubs.push(listenAllWatched(data => {
     allWatched = data;
-    if (profilesSynced && rankingsSynced) renderPage();
+    if (profilesSynced && rankingsSynced && currentUser && activeTab === "watched") renderWatchedList();
+    if (profilesSynced && rankingsSynced && currentUser && activeTab === "search" && recentExpanded) renderRecentFeed();
+    if (profilesSynced && rankingsSynced && currentUser && activeTab === "badges") refreshBadgesTabIfActive();
   }));
   legacyDataUnsubs.push(listenAllWatchlist(data => {
     allWatchlist = data;
-    if (profilesSynced && rankingsSynced) renderPage();
+    if (profilesSynced && rankingsSynced && currentUser && activeTab === "watchlist") renderWatchlist();
   }));
   legacyDataUnsubs.push(listenIncomingRecos(data => {
     incomingRecos = data;
-    if (profilesSynced && rankingsSynced) renderPage();
+    if (profilesSynced && rankingsSynced && currentUser && !onboardingNewUser) renderPagePreservingScroll();
   }));
   setTimeout(() => {
     profilesSynced = true;
@@ -1101,7 +1115,7 @@ function removeRecoLocally(docId) {
 async function completeReco(docId, toastText = "") {
   if (!docId) return;
   removeRecoLocally(docId);
-  renderPage();
+  renderPagePreservingScroll();
   try {
     await dismissReco(docId);
     if (toastText) showToast(toastText);
@@ -1159,7 +1173,77 @@ async function discoverMoviesByGenres(genreIds, params = {}) {
   return data.results || [];
 }
 async function getMovieDetails(id) {
-  return await tmdbFetch(`/movie/${id}`, { append_to_response: "videos,credits,keywords" });
+  return await tmdbFetch(`/movie/${id}`, { append_to_response: "videos,credits,keywords,watch/providers" });
+}
+function watchProvidersFromDetails(details, country = "FR") {
+  return details?.["watch/providers"]?.results?.[country] || null;
+}
+const MAJOR_WATCH_PROVIDERS = [
+  name => /netflix/i.test(name),
+  name => /prime video/i.test(name),
+  name => /canal\+/i.test(name),
+  name => /disney/i.test(name),
+  name => /apple tv/i.test(name),
+  name => /^paramount\s*\+?$/i.test(name.trim()),
+  name => /^(hbo\s*)?max$/i.test(name.trim()),
+  name => /^ocs$/i.test(name.trim()),
+  name => /^arte$/i.test(name.trim()),
+  name => /google play/i.test(name),
+  name => /youtube/i.test(name)
+];
+function watchProviderPriorityRank(name) {
+  const idx = MAJOR_WATCH_PROVIDERS.findIndex(test => test(name));
+  return idx === -1 ? MAJOR_WATCH_PROVIDERS.length : idx;
+}
+function isMajorWatchProvider(name) {
+  return MAJOR_WATCH_PROVIDERS.some(test => test(name));
+}
+function sortWatchProviders(list) {
+  return [...list].sort((a, b) => watchProviderPriorityRank(a.provider_name) - watchProviderPriorityRank(b.provider_name)
+    || (a.display_priority ?? 0) - (b.display_priority ?? 0));
+}
+function watchProvidersHtml(providers, movieTitle = "") {
+  const tile = (p, tag) => `
+    <div class="watch-provider-tile">
+      <img class="watch-provider-logo" src="https://image.tmdb.org/t/p/w92${p.logo_path}" alt="${escapeAttr(p.provider_name)}" title="${escapeAttr(p.provider_name)}" loading="lazy">
+      ${tag ? `<span class="watch-provider-tag">${escapeHtml(tag)}</span>` : ""}
+    </div>`;
+
+  const isMajor = p => isMajorWatchProvider(p.provider_name);
+  const included = sortWatchProviders([...(providers?.flatrate || []), ...(providers?.ads || [])].filter(isMajor));
+  const includedIds = new Set(included.map(p => p.provider_id));
+
+  const rentBuyMap = new Map();
+  (providers?.rent || []).filter(isMajor).forEach(p => {
+    if (includedIds.has(p.provider_id)) return;
+    rentBuyMap.set(p.provider_id, { ...p, tags: new Set(["Location"]) });
+  });
+  (providers?.buy || []).filter(isMajor).forEach(p => {
+    if (includedIds.has(p.provider_id)) return;
+    const existing = rentBuyMap.get(p.provider_id);
+    if (existing) existing.tags.add("Achat");
+    else rentBuyMap.set(p.provider_id, { ...p, tags: new Set(["Achat"]) });
+  });
+  const rentAndBuy = sortWatchProviders([...rentBuyMap.values()]);
+
+  if (!included.length && !rentAndBuy.length) {
+    return `
+      <div class="movie-detail-box">
+        <div class="movie-detail-label">Où le regarder</div>
+        <p>Non disponible en streaming pour l'instant.</p>
+      </div>`;
+  }
+
+  const priceLink = `https://www.justwatch.com/fr/recherche?q=${encodeURIComponent(movieTitle)}`;
+  return `
+    <div class="movie-detail-box">
+      <div class="movie-detail-label">Où le regarder</div>
+      <div class="watch-provider-row">
+        ${included.map(p => tile(p, "")).join("")}
+        ${rentAndBuy.map(p => tile(p, [...p.tags].join(" / "))).join("")}
+      </div>
+      ${rentAndBuy.length ? `<a class="watch-provider-link" href="${escapeAttr(priceLink)}" target="_blank" rel="noopener noreferrer">Voir les prix</a>` : ""}
+    </div>`;
 }
 async function getSagaMovieResult(id) {
   const movieId = Number(id);
@@ -1329,7 +1413,7 @@ async function ensureDirectorFilmography(director) {
       portraitChecked: true,
       updatedAt: Date.now()
     }));
-    if (activeTab === "search" || activeTab === "badges") renderPage();
+    if (activeTab === "search" || activeTab === "badges") renderPagePreservingScroll();
   } catch (e) {
     // The director challenge remains usable with a five-film target when TMDB is unavailable.
   } finally {
@@ -1638,10 +1722,24 @@ function renderBadgeMovieCards(container, movies) {
   container.querySelectorAll(".badge-movie-card").forEach(button => {
     button.addEventListener("click", () => {
       const movie = JSON.parse(button.dataset.movie);
+      pendingActionBadgeId = document.getElementById("badge-movies-overlay")?.dataset.challengeId || null;
       closeBadgeMoviesSheet();
       openMovieActionSheet(movie, "badge");
     });
   });
+}
+function maybeRestoreBadgeMoviesSheet() {
+  if (!pendingActionBadgeId) return;
+  if (activeTab !== "badges") {
+    pendingActionBadgeId = null;
+    return;
+  }
+  const stillInFlow = ["movie-action-overlay", "rating-overlay", "recommend-overlay"]
+    .some(id => document.getElementById(id)?.classList.contains("show"));
+  if (stillInFlow) return;
+  const challengeId = pendingActionBadgeId;
+  pendingActionBadgeId = null;
+  openBadgeMoviesSheet(challengeId);
 }
 async function openBadgeMoviesSheet(challengeId) {
   let challenge = cinemaChallengeCatalog().find(item => item.id === challengeId);
@@ -1674,14 +1772,18 @@ async function openBadgeMoviesSheet(challengeId) {
   document.getElementById("btn-set-badge-objective")?.addEventListener("click", event => {
     setActiveCinemaChallenge(challenge.id);
     event.currentTarget.textContent = "Objectif actif";
-    renderPage();
+    if (activeTab === "badges") refreshBadgesTabIfActive();
+    else renderPagePreservingScroll();
     showToast(`${challenge.name} devient ton objectif`);
   });
   document.getElementById("btn-toggle-showcase-badge")?.addEventListener("click", async event => {
     event.currentTarget.disabled = true;
     const changed = await toggleShowcaseBadge(challenge);
     event.currentTarget.disabled = false;
-    if (changed) event.currentTarget.textContent = isBadgeShowcased(challenge.id) ? "★ Dans ta vitrine" : "☆ Ajouter à ta vitrine";
+    if (changed) {
+      event.currentTarget.textContent = isBadgeShowcased(challenge.id) ? "★ Dans ta vitrine" : "☆ Ajouter à ta vitrine";
+      if (activeTab === "badges") refreshBadgesTabIfActive();
+    }
   });
 
   try {
@@ -2277,6 +2379,32 @@ function tabIconHtml(icon) {
       <path d="M14 11v6"></path>
     </svg>`;
   }
+  if (icon === "dice") {
+    return `<svg ${common}>
+      <rect x="3" y="3" width="18" height="18" rx="4"></rect>
+      <path d="M8 8h.01"></path>
+      <path d="M16 8h.01"></path>
+      <path d="M8 16h.01"></path>
+      <path d="M16 16h.01"></path>
+      <path d="M12 12h.01"></path>
+    </svg>`;
+  }
+  if (icon === "refresh") {
+    return `<svg ${common}>
+      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+      <path d="M21 3v5h-5"></path>
+      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+      <path d="M8 16H3v5"></path>
+    </svg>`;
+  }
+  if (icon === "clapperboard") {
+    return `<svg ${common}>
+      <path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3Z"></path>
+      <path d="m6.2 5.3 3.1 3.9"></path>
+      <path d="m12.4 3.4 3.1 4"></path>
+      <path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path>
+    </svg>`;
+  }
   if (icon === "log-out") {
     return `<svg ${common}>
       <path d="M10 17 15 12 10 7"></path>
@@ -2647,12 +2775,19 @@ function renderWatchlistTabContent() {
   const count = myWatchlist().length;
   return `
     ${renderCollectionIntro("LISTE", "À voir", `${count} film${count > 1 ? "s" : ""} gardé${count > 1 ? "s" : ""} pour plus tard`, "watchlist")}
+    <div class="tonight-pick-cta-wrap">
+      <button class="tonight-pick-cta" id="btn-tonight-pick" type="button">
+        ${surfaceIconHtml("dice", "tonight-pick-cta-icon")}
+        <span class="tonight-pick-cta-copy"><strong>On regarde quoi ce soir ?</strong><small>Tirage au sort dans ta liste À voir</small></span>
+      </button>
+    </div>
     <div class="watchlist-list" id="watchlist-list"></div>`;
 }
 
 function renderBadgesTabContent() {
   const catalog = cinemaChallengeCatalog();
   const unlocked = catalog.filter(challenge => challenge.completed).length;
+  const showcase = myShowcaseBadges();
   const filters = [
     { id: "progress", label: "À finir" },
     { id: "unlocked", label: "Gagnés" },
@@ -2660,19 +2795,55 @@ function renderBadgesTabContent() {
     { id: "all", label: "Tous" }
   ];
   return `
-    <div class="badges-tab-hero">
-      <span>COLLECTION</span>
-      <strong>${unlocked} / ${catalog.length} badges débloqués</strong>
-      <p>Chaque film vu peut te rapprocher d'un nouveau trophée.</p>
-    </div>
-    ${renderChallengeSpotlightHtml(false)}
-    <section class="badges-tab-collection">
-      <div class="badges-tab-heading"><strong>Tous les badges</strong><span>Touche un badge pour voir les films associés</span></div>
-      <div class="badge-filter-bar" role="group" aria-label="Filtrer les badges">
-        ${filters.map(filter => `<button class="badge-filter-btn ${badgeGalleryFilter === filter.id ? "active" : ""}" data-filter="${filter.id}" type="button" aria-pressed="${badgeGalleryFilter === filter.id}">${filter.label}</button>`).join("")}
+    <div id="badges-tab-root">
+      <div class="badges-tab-hero">
+        <span>COLLECTION</span>
+        <strong>${unlocked} / ${catalog.length} badges débloqués</strong>
+        <p>Chaque film vu peut te rapprocher d'un nouveau trophée.</p>
       </div>
-      <div class="cinema-challenge-gallery" id="badges-challenge-gallery" data-filter="${escapeAttr(badgeGalleryFilter)}"></div>
-    </section>`;
+      ${showcase.length ? `
+      <div class="badges-showcase">
+        <div class="badges-showcase-label">Ta vitrine <small>· visible par tes amis</small></div>
+        <div class="badges-showcase-row">
+          ${showcase.map(b => `<button class="badges-showcase-item" data-challenge-id="${escapeAttr(b.id)}" type="button" aria-label="${escapeAttr(b.name)}">${challengeBadgeArtHtml(b)}</button>`).join("")}
+        </div>
+      </div>` : ""}
+      ${renderChallengeSpotlightHtml(false)}
+      <section class="badges-tab-collection">
+        <div class="badges-tab-heading"><strong>Tous les badges</strong><span>Touche un badge pour voir les films associés</span></div>
+        <div class="badge-filter-bar" role="group" aria-label="Filtrer les badges">
+          ${filters.map(filter => `<button class="badge-filter-btn ${badgeGalleryFilter === filter.id ? "active" : ""}" data-filter="${filter.id}" type="button" aria-pressed="${badgeGalleryFilter === filter.id}">${filter.label}</button>`).join("")}
+        </div>
+        <div class="cinema-challenge-gallery" id="badges-challenge-gallery" data-filter="${escapeAttr(badgeGalleryFilter)}"></div>
+      </section>
+    </div>`;
+}
+function attachBadgesTabEvents() {
+  document.querySelectorAll(".badge-filter-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      if (badgeGalleryFilter === btn.dataset.filter) return;
+      badgeGalleryFilter = btn.dataset.filter;
+      renderPage();
+    });
+  });
+  document.getElementById("btn-open-challenges")?.addEventListener("click", openChallengesSheet);
+  document.getElementById("btn-challenge-movies")?.addEventListener("click", () => {
+    const challengeId = document.querySelector(".cinema-challenge-featured")?.dataset.challengeId;
+    if (challengeId) openBadgeMoviesSheet(challengeId);
+  });
+  document.querySelectorAll(".badges-showcase-item").forEach(btn => {
+    btn.addEventListener("click", () => openBadgeMoviesSheet(btn.dataset.challengeId));
+  });
+}
+function refreshBadgesTabIfActive() {
+  if (activeTab !== "badges") return;
+  const root = document.getElementById("badges-tab-root");
+  if (!root) return;
+  const savedScrollY = window.scrollY;
+  root.outerHTML = renderBadgesTabContent();
+  attachBadgesTabEvents();
+  renderActiveTabView();
+  if (savedScrollY) requestAnimationFrame(() => window.scrollTo(0, savedScrollY));
 }
 
 function renderFriendsTabContent(viewed) {
@@ -2695,6 +2866,7 @@ function renderFriendsTabContent(viewed) {
           <span>
             <strong>${escapeHtml(p.name)}</strong>
             <small>${(allRankings[p.id] || []).length} film${(allRankings[p.id] || []).length > 1 ? "s" : ""} dans son Top</small>
+            ${(p.showcaseBadges || []).length ? `<span class="friend-showcase-row">${p.showcaseBadges.map(b => `<span class="friend-showcase-badge">${challengeBadgeArtHtml(b)}</span>`).join("")}</span>` : ""}
           </span>
         </button>
       `).join("")}
@@ -2816,6 +2988,12 @@ function renderPage() {
   }
 }
 
+function renderPagePreservingScroll() {
+  const savedScrollY = window.scrollY;
+  renderPage();
+  if (savedScrollY) requestAnimationFrame(() => window.scrollTo(0, savedScrollY));
+}
+
 function renderActiveTabView() {
   if (activeTab === "search") {
     ensureChallengeMetadata();
@@ -2908,22 +3086,12 @@ function attachAppEvents() {
   });
   const toggleIncomingRecos = () => {
     incomingRecosExpanded = !incomingRecosExpanded;
-    renderPage();
+    renderPagePreservingScroll();
   };
   document.getElementById("btn-toggle-incoming-recos")?.addEventListener("click", toggleIncomingRecos);
   document.getElementById("btn-show-incoming-recos")?.addEventListener("click", toggleIncomingRecos);
-  document.querySelectorAll(".badge-filter-btn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      if (badgeGalleryFilter === btn.dataset.filter) return;
-      badgeGalleryFilter = btn.dataset.filter;
-      renderPage();
-    });
-  });
-  document.getElementById("btn-open-challenges")?.addEventListener("click", openChallengesSheet);
-  document.getElementById("btn-challenge-movies")?.addEventListener("click", () => {
-    const challengeId = document.querySelector(".cinema-challenge-featured")?.dataset.challengeId;
-    if (challengeId) openBadgeMoviesSheet(challengeId);
-  });
+  attachBadgesTabEvents();
+  document.getElementById("btn-tonight-pick")?.addEventListener("click", openTonightPickSheet);
 
   document.getElementById("btn-reset")?.addEventListener("click", () => {
     openConfirmSheet({
@@ -3204,6 +3372,7 @@ function closeRatingSheet() {
   pendingRatingMovie = null;
   pendingRatingOrigin = null;
   pendingRatingRecoDoc = null;
+  setTimeout(maybeRestoreBadgeMoviesSheet, 0);
 }
 
 async function addToWatched(movie, rating) {
@@ -3215,7 +3384,7 @@ async function addToWatched(movie, rating) {
   const updated = existingIndex >= 0 ? [...list] : [watchedMovie, ...list];
   if (existingIndex >= 0) updated[existingIndex] = { ...updated[existingIndex], ...watchedMovie };
   allWatched = { ...allWatched, [currentUser]: updated };
-  if (activeTab === "badges") renderPage();
+  if (activeTab === "badges") refreshBadgesTabIfActive();
   else renderWatchedList();
   showToast(`${movie.title} noté ${rating}/10`);
   try {
@@ -3243,7 +3412,7 @@ async function addToWatched(movie, rating) {
       };
       const enrichedList = updated.map(item => Number(item.id) === Number(enriched.id) ? enriched : item);
       await saveWatchedToCloud(currentUser, enrichedList);
-      if (activeTab === "badges") renderPage();
+      if (activeTab === "badges") refreshBadgesTabIfActive();
     } catch (e) {
       // ensureChallengeMetadata will retry without losing the rating.
     }
@@ -3278,6 +3447,66 @@ function addToWatchlist(movie) {
   saveWatchlistToCloud(currentUser, updated).catch(() => showToast("Erreur d'enregistrement"));
   renderWatchlist();
   showToast(`${movie.title} ajouté à À voir`);
+}
+
+let tonightPickMovie = null;
+
+function pickTonightMovie(excludeId = null) {
+  const list = myWatchlist();
+  if (!list.length) return null;
+  const pool = excludeId != null && list.length > 1 ? list.filter(m => m.id !== excludeId) : list;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function renderTonightPick(movie) {
+  tonightPickMovie = movie;
+  const poster = movie.poster_path ? TMDB_IMG + movie.poster_path : "";
+  const year = movie.release_date ? String(movie.release_date).slice(0, 4) : "????";
+  const rating = movie.vote_average ? Number(movie.vote_average).toFixed(1) : "—";
+  document.getElementById("tonight-pick-content").innerHTML = `
+    ${poster ? `<img class="tonight-pick-poster" src="${poster}" alt="${escapeAttr(movie.title)}">` : `<div class="tonight-pick-poster tonight-pick-poster-empty"></div>`}
+    <div class="tonight-pick-kicker">CE SOIR</div>
+    <h2>${escapeHtml(movie.title)}</h2>
+    <p>${escapeHtml(year)} · ⭐ ${rating}</p>
+    <div id="tonight-pick-providers" class="movie-detail-loading"><span class="loading-spin"></span></div>
+  `;
+  loadTonightPickProviders(movie);
+}
+
+async function loadTonightPickProviders(movie) {
+  const zone = document.getElementById("tonight-pick-providers");
+  if (!zone) return;
+  try {
+    const details = await getMovieDetails(movie.id);
+    if (!document.body.contains(zone) || tonightPickMovie?.id !== movie.id) return;
+    zone.outerHTML = watchProvidersHtml(watchProvidersFromDetails(details), movie.title);
+  } catch (e) {
+    if (!document.body.contains(zone) || tonightPickMovie?.id !== movie.id) return;
+    zone.outerHTML = watchProvidersHtml(null, movie.title);
+  }
+}
+
+function openTonightPickSheet() {
+  const movie = pickTonightMovie();
+  if (!movie) {
+    showToast("Ajoute des films à ta liste À voir pour tirer au sort");
+    return;
+  }
+  renderTonightPick(movie);
+  document.getElementById("tonight-pick-overlay").classList.add("show");
+  scheduleScrollLockUpdate();
+}
+
+function rerollTonightPick() {
+  const movie = pickTonightMovie(tonightPickMovie?.id ?? null);
+  if (!movie) return;
+  renderTonightPick(movie);
+}
+
+function closeTonightPickSheet() {
+  document.getElementById("tonight-pick-overlay").classList.remove("show");
+  tonightPickMovie = null;
+  scheduleScrollLockUpdate();
 }
 
 function removeFromWatchlist(movieId) {
@@ -3333,7 +3562,8 @@ async function loadMovieActionDetails(movie) {
         <div class="movie-detail-label">Synopsis</div>
         <p>${escapeHtml(overview)}</p>
         ${url ? `<button class="movie-trailer-btn" data-url="${escapeAttr(url)}" type="button">Voir la bande-annonce</button>` : ""}
-      </div>`;
+      </div>
+      ${watchProvidersHtml(watchProvidersFromDetails(details), movie.title)}`;
     zone.querySelector(".movie-trailer-btn")?.addEventListener("click", (e) => {
       e.stopPropagation();
       window.open(e.currentTarget.dataset.url, "_blank", "noopener,noreferrer");
@@ -3366,7 +3596,6 @@ function openMovieActionSheet(movie, origin = "search", index = null) {
   `;
 
   document.getElementById("movie-action-items").innerHTML = `
-    <div id="movie-action-details"></div>
     <button class="context-item movie-action-item ${inTop ? "is-done" : ""}" data-action="top" type="button" ${inTop ? "disabled" : ""}>
       ${surfaceIconHtml(inTop ? "check" : "crown", "movie-action-icon")}
       <span class="movie-action-copy"><strong>${inTop ? "Dans ton Top" : "Ajouter au Top"}</strong><small>${inTop ? "Action déjà effectuée" : "Ajouté en dernière position"}</small></span>
@@ -3386,6 +3615,8 @@ function openMovieActionSheet(movie, origin = "search", index = null) {
     ${origin === "top" ? `<div class="context-divider"></div><button class="context-item movie-action-item danger" data-action="remove-top" type="button">${surfaceIconHtml("trash", "movie-action-icon")}<span class="movie-action-copy"><strong>Retirer du Top</strong></span></button>` : ""}
     ${origin === "watched" ? `<div class="context-divider"></div><button class="context-item movie-action-item danger" data-action="remove-watched" type="button">${surfaceIconHtml("trash", "movie-action-icon")}<span class="movie-action-copy"><strong>Retirer des vus</strong></span></button>` : ""}
     ${origin === "watchlist" ? `<div class="context-divider"></div><button class="context-item movie-action-item danger" data-action="remove-watchlist" type="button">${surfaceIconHtml("trash", "movie-action-icon")}<span class="movie-action-copy"><strong>Retirer de À voir</strong></span></button>` : ""}
+    <div class="context-divider"></div>
+    <div id="movie-action-details"></div>
   `;
 
   document.getElementById("movie-action-overlay").classList.add("show");
@@ -3400,6 +3631,7 @@ function closeMovieActionSheet() {
   pendingActionMovie = null;
   pendingActionOrigin = null;
   pendingActionIndex = null;
+  setTimeout(maybeRestoreBadgeMoviesSheet, 0);
 }
 
 function closeOverlayElement(overlay) {
@@ -3415,7 +3647,8 @@ function closeOverlayElement(overlay) {
     "badge-movies-overlay": closeBadgeMoviesSheet,
     "badge-unlock-overlay": closeBadgeUnlockSheet,
     "confirm-overlay": closeConfirmSheet,
-    "rating-overlay": closeRatingSheet
+    "rating-overlay": closeRatingSheet,
+    "tonight-pick-overlay": closeTonightPickSheet
   };
   (closers[overlay.id] || (() => overlay.classList.remove("show")))();
 }
@@ -3503,6 +3736,13 @@ function renderRanked() {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         openRecommendSheet(JSON.parse(btn.dataset.movie));
+      });
+    });
+    el.querySelectorAll(".rank-card").forEach(row => {
+      row.addEventListener("click", (e) => {
+        if (e.target.closest(".rank-recommend-btn")) return;
+        const movie = list[parseInt(row.dataset.index)];
+        if (movie) openMovieActionSheet(movie, "friend");
       });
     });
   }
@@ -3890,6 +4130,7 @@ function openRecommendSheet(movie) {
 }
 function closeRecommendSheet() {
   document.getElementById("recommend-overlay").classList.remove("show");
+  setTimeout(maybeRestoreBadgeMoviesSheet, 0);
 }
 
 function notificationStatusLabel() {
@@ -4098,12 +4339,10 @@ function openProfileSheet(profileId = currentUser) {
   scheduleScrollLockUpdate();
   if (profileId === currentUser) ensurePortraitMetadata();
 }
-
 function closeProfileSheet() {
   document.getElementById("profile-overlay")?.classList.remove("show");
   scheduleScrollLockUpdate();
 }
-
 function portraitMoviePoster(movie, position) {
   const image = movie?.poster_path ? `style="background-image:url('${escapeAttr(TMDB_IMG + movie.poster_path)}')"` : "";
   return `<div class="portrait-story-poster p${position}" ${image}><em>${position}</em><strong>${escapeHtml(movie?.title || "À compléter")}</strong></div>`;
@@ -4451,7 +4690,7 @@ async function setupForegroundPushListener() {
     onMessage(messaging, payload => {
       const body = payload.notification?.body || payload.data?.body || "Nouvelle recommandation reçue";
       showToast(body);
-      if (profilesSynced && rankingsSynced && currentUser && !onboardingNewUser) renderPage();
+      if (profilesSynced && rankingsSynced && currentUser && !onboardingNewUser) renderPagePreservingScroll();
     });
     foregroundPushListening = true;
   } catch (e) {}
@@ -4727,7 +4966,7 @@ async function ensureChallengeMetadata() {
 
     const director = preferredDirectorFromSeen(challengeSeenMovies());
     if (director) await ensureDirectorFilmography(director);
-    if (activeTab === "badges" && (rankedChanged || watchedChanged)) renderPage();
+    if (activeTab === "badges" && (rankedChanged || watchedChanged)) refreshBadgesTabIfActive();
   } catch (e) {
     // Badges keep their basic genre progress when metadata enrichment fails.
   } finally {
@@ -5368,6 +5607,20 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target.id === "rating-overlay") closeRatingSheet();
   });
   document.getElementById("btn-cancel-rating").addEventListener("click", closeRatingSheet);
+  document.getElementById("tonight-pick-overlay").addEventListener("click", (e) => {
+    if (e.target.id === "tonight-pick-overlay") closeTonightPickSheet();
+  });
+  const btnTonightPickWatch = document.getElementById("btn-tonight-pick-watch");
+  btnTonightPickWatch.insertAdjacentHTML("afterbegin", surfaceIconHtml("clapperboard", "tonight-pick-btn-icon"));
+  btnTonightPickWatch.addEventListener("click", () => {
+    const movie = tonightPickMovie;
+    if (!movie) return;
+    closeTonightPickSheet();
+    openRatingSheet(movie, "watchlist");
+  });
+  const btnTonightPickReroll = document.getElementById("btn-tonight-pick-reroll");
+  btnTonightPickReroll.insertAdjacentHTML("afterbegin", surfaceIconHtml("refresh", "tonight-pick-btn-icon"));
+  btnTonightPickReroll.addEventListener("click", rerollTonightPick);
   document.querySelectorAll(".context-handle").forEach(handle => {
     handle.addEventListener("click", () => closeOverlayElement(handle.closest(".context-overlay")));
   });
@@ -5721,6 +5974,8 @@ body.no-page-scroll #root {
   box-shadow: inset 4px 4px 10px var(--shadow-d), inset -4px -4px 10px var(--shadow-l);
 }
 .friend-card span:not(.avatar-initial-sm) { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.friend-showcase-row { display: flex; gap: 4px; margin-top: 2px; }
+.friend-showcase-badge { display: inline-block; width: 20px; height: 20px; flex-shrink: 0; }
 .friend-card strong { font-size: 14px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .friend-card small { font-size: 11px; color: var(--ink-soft); font-weight: 700; line-height: 1.25; }
 .friends-invite-btn { margin: 0 20px 14px; width: calc(100% - 40px); border-radius: 16px; background: rgba(255,255,255,.56); }
@@ -5903,6 +6158,14 @@ body.no-page-scroll #root {
 }
 .badges-tab-hero > strong { display: block; margin-top: 5px; font-size: 22px; font-weight: 800; line-height: 1.15; }
 .badges-tab-hero > p { margin-top: 5px; color: var(--ink-soft); font-size: 11px; font-weight: 650; line-height: 1.4; }
+.badges-showcase { width: calc(100% - 40px); max-width: 980px; margin: 16px auto 0; }
+.badges-showcase-label {
+  font-family: 'DM Mono', monospace; font-size: 10px; font-weight: 700; color: var(--ink-soft);
+  text-transform: uppercase; letter-spacing: .4px; margin-bottom: 8px;
+}
+.badges-showcase-label small { text-transform: none; font-weight: 600; opacity: .8; }
+.badges-showcase-row { display: flex; gap: 12px; }
+.badges-showcase-item { width: 48px; height: 48px; border: none; background: none; padding: 0; cursor: pointer; flex-shrink: 0; }
 .badges-tab-collection { width: calc(100% - 40px); max-width: 980px; margin: 24px auto 112px; }
 .badges-tab-heading { margin-bottom: 12px; }
 .badges-tab-heading strong { display: block; font-size: 16px; font-weight: 800; }
@@ -6192,6 +6455,41 @@ body.no-page-scroll #root {
   display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 800;
 }
 
+.tonight-pick-cta-wrap { width: calc(100% - 40px); max-width: 880px; margin: 0 auto 18px; }
+.tonight-pick-cta {
+  width: 100%; border: none; background: linear-gradient(135deg, var(--lav), var(--pink));
+  border-radius: 20px; padding: 16px; display: flex; align-items: center; gap: 13px;
+  text-align: left; color: white; cursor: pointer; font-family: 'Plus Jakarta Sans', sans-serif;
+  box-shadow: 5px 5px 14px var(--shadow-d), -5px -5px 14px var(--shadow-l);
+  transition: transform 0.14s cubic-bezier(.2,.8,.2,1);
+}
+.tonight-pick-cta:active { transform: scale(0.97); }
+.tonight-pick-cta-icon { flex-shrink: 0; display: flex; }
+.tonight-pick-cta-icon .tab-svg { width: 26px; height: 26px; }
+.tonight-pick-cta-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.tonight-pick-cta-copy strong { font-size: 15px; font-weight: 800; }
+.tonight-pick-cta-copy small { font-size: 11px; font-weight: 650; opacity: 0.9; }
+.tonight-pick-sheet { text-align: center; }
+.tonight-pick-kicker {
+  margin-top: 14px; color: var(--lav-deep); font-family: 'DM Mono', monospace;
+  font-size: 10px; font-weight: 700; letter-spacing: .6px;
+}
+.tonight-pick-poster {
+  width: 140px; aspect-ratio: 2/3; object-fit: cover; border-radius: 16px; margin: 4px auto 0;
+  box-shadow: 5px 5px 14px var(--shadow-d), -5px -5px 14px var(--shadow-l); display: block;
+}
+.tonight-pick-poster-empty { background: #E8E4F5; }
+#tonight-pick-content h2 { margin-top: 10px; font-size: 20px; font-weight: 800; line-height: 1.2; }
+#tonight-pick-content p { margin-top: 4px; color: var(--ink-soft); font-size: 12px; font-weight: 700; }
+.tonight-pick-sheet .movie-detail-box { margin-top: 14px; text-align: left; }
+.tonight-pick-sheet .watch-provider-row { justify-content: center; }
+.tonight-pick-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+.tonight-pick-actions .btn-primary, .tonight-pick-actions .btn-secondary {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+}
+.tonight-pick-btn-icon { display: flex; }
+.tonight-pick-btn-icon .tab-svg { width: 18px; height: 18px; }
+
 .watched-list, .watchlist-list { width: calc(100% - 40px); max-width: 880px; margin: 0 auto; padding: 0; display: flex; flex-direction: column; gap: 12px; }
 .shelf-row {
   display: grid; grid-template-columns: 54px 1fr auto; align-items: center; gap: 12px;
@@ -6264,6 +6562,14 @@ body.no-page-scroll #root {
   box-shadow: 3px 3px 8px var(--shadow-d), -3px -3px 8px var(--shadow-l);
 }
 .movie-trailer-btn:active { transform: scale(0.98); }
+.watch-provider-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.watch-provider-tile { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 44px; }
+.watch-provider-logo { width: 40px; height: 40px; border-radius: 11px; object-fit: cover; box-shadow: 3px 3px 8px var(--shadow-d), -3px -3px 8px var(--shadow-l); }
+.watch-provider-tag { font-size: 8.5px; font-weight: 800; color: var(--ink-soft); text-align: center; line-height: 1.2; }
+.watch-provider-link {
+  display: inline-block; margin-top: 10px; color: var(--lav-deep); font-size: 11.5px; font-weight: 800;
+  text-decoration: underline;
+}
 .context-item { display: flex; align-items: center; gap: 12px; padding: 14px 12px; border-radius: 14px; font-weight: 600; font-size: 15px; color: var(--ink); cursor: pointer; transition: background 0.1s; }
 .context-item:active { background: var(--bg); }
 .context-item.danger { color: #d64668; }
@@ -6348,6 +6654,26 @@ body.no-page-scroll #root {
   background: rgba(246,244,252,0.78); border-radius: 18px; padding: 6px; margin: 0 4px 10px;
   box-shadow: inset 3px 3px 8px rgba(180,170,220,0.18), inset -3px -3px 8px rgba(255,255,255,0.85);
 }
+.profile-sheet { max-width: 480px; text-align: center; }
+.profile-sheet-header { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 10px 0 4px; }
+.profile-sheet-header strong { font-size: 20px; font-weight: 800; }
+.profile-sheet-header small { color: var(--ink-soft); font-size: 11px; font-weight: 700; }
+.profile-sheet-stats {
+  display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin: 16px 4px;
+  background: rgba(246,244,252,0.78); border-radius: 18px; padding: 12px 6px;
+  box-shadow: inset 3px 3px 8px rgba(180,170,220,0.18), inset -3px -3px 8px rgba(255,255,255,0.85);
+}
+.profile-sheet-stats > div strong { display: block; font-size: 18px; font-weight: 800; }
+.profile-sheet-stats > div span { display: block; margin-top: 2px; color: var(--ink-soft); font-size: 10.5px; font-weight: 700; text-transform: uppercase; }
+.profile-sheet-trophies { margin: 8px 4px 18px; text-align: left; }
+.profile-trophy-row { display: flex; gap: 14px; justify-content: center; }
+.profile-trophy-item {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; width: 68px;
+  border: none; background: none; padding: 0; cursor: pointer;
+}
+.profile-trophy-item > *:first-child { width: 56px; height: 56px; }
+.profile-trophy-item small { font-size: 10px; font-weight: 700; color: var(--ink-soft); text-align: center; line-height: 1.25; }
+.profile-trophy-empty { color: var(--ink-soft); font-size: 12.5px; font-weight: 650; text-align: center; line-height: 1.5; }
 .settings-item {
   width: 100%; border: none; background: transparent; font-family: 'Plus Jakarta Sans', sans-serif; text-align: left;
 }
@@ -6576,7 +6902,6 @@ body:has(.app-tabbar-wrap) .toast { bottom: calc(env(safe-area-inset-bottom, 0px
     </div>
   </div>
 </div>
-
 <div class="context-overlay" id="cinema-challenges-overlay" aria-hidden="true">
   <div class="context-sheet cinema-challenges-sheet" role="dialog" aria-modal="true" aria-label="Défis cinéma">
     <button class="context-handle" type="button" aria-label="Fermer"></button>
@@ -6631,6 +6956,17 @@ body:has(.app-tabbar-wrap) .toast { bottom: calc(env(safe-area-inset-bottom, 0px
     <div class="context-preview" id="rating-preview"></div>
     <div class="rating-options" id="rating-options"></div>
     <button class="btn-secondary" id="btn-cancel-rating">Annuler</button>
+  </div>
+</div>
+
+<div class="context-overlay" id="tonight-pick-overlay" aria-hidden="true">
+  <div class="context-sheet tonight-pick-sheet" role="dialog" aria-modal="true" aria-label="Un film pour ce soir">
+    <button class="context-handle" type="button" aria-label="Fermer"></button>
+    <div id="tonight-pick-content"></div>
+    <div class="tonight-pick-actions">
+      <button class="btn-primary" id="btn-tonight-pick-watch" type="button"><span>On regarde ça !</span></button>
+      <button class="btn-secondary" id="btn-tonight-pick-reroll" type="button"><span>Un autre film</span></button>
+    </div>
   </div>
 </div>
 
