@@ -2068,9 +2068,11 @@ function canUsePushHere() {
   return "serviceWorker" in navigator && "Notification" in window && isHttpsLike();
 }
 function shouldForceInstallGate() {
+  if (localStorage.getItem("installGateSkipped") === "1") return false;
   return isMobileDevice() && !isStandaloneApp();
 }
 function shouldForceNotificationGate() {
+  if (localStorage.getItem("notificationGateSkipped") === "1") return false;
   if (!isMobileDevice() || !isStandaloneApp()) return false;
   if (!isPushConfigured() || !("Notification" in window)) return false;
   return Notification.permission !== "granted";
@@ -2189,6 +2191,7 @@ function renderInstallGate() {
     <button class="btn-primary" id="btn-install-gate">${escapeHtml(copy.primaryLabel || installButtonTitle())}</button>
     ${renderInstallSupportActions("install-gate")}
     <button class="btn-secondary" id="btn-install-check">J'ai ajouté l'app</button>
+    <button class="btn-secondary" id="btn-install-skip">Continuer sans installer</button>
   </div>`;
 
   document.getElementById("btn-install-gate").addEventListener("click", openInstallSheet);
@@ -2201,6 +2204,10 @@ function renderInstallGate() {
       openInstallSheet();
       showToast("Ouvre Popcorn depuis l'icône installée");
     }
+  });
+  document.getElementById("btn-install-skip").addEventListener("click", () => {
+    localStorage.setItem("installGateSkipped", "1");
+    renderPage();
   });
 
   if (!installGateSheetShown) {
@@ -2228,11 +2235,16 @@ function renderNotificationGate() {
       ])}
     </div>
     <button class="btn-primary" id="btn-notification-gate">${denied ? "Réessayer" : "Autoriser les notifications"}</button>
+    <button class="btn-secondary" id="btn-notification-skip">Plus tard</button>
   </div>`;
 
   document.getElementById("btn-notification-gate").addEventListener("click", async () => {
     const enabled = await enablePushNotifications({ allowWithoutProfile: true });
     if (enabled) renderPage();
+  });
+  document.getElementById("btn-notification-skip").addEventListener("click", () => {
+    localStorage.setItem("notificationGateSkipped", "1");
+    renderPage();
   });
 }
 function normalizeActiveUsers() {
@@ -4480,6 +4492,7 @@ function renderSettingsSheetContent() {
         <span><strong>Supprimer mon compte</strong><small>Supprime le profil et ses données</small></span>
       </button>
     </div>
+    <p class="settings-legal-note">Ce produit utilise l'API TMDB mais n'est ni approuvé ni certifié par TMDB.</p>
   `;
 
   document.querySelectorAll(".settings-item").forEach(item => {
@@ -5638,8 +5651,8 @@ document.addEventListener("DOMContentLoaded", () => {
   --bg: #F6F4FC;
   --card: #FFFFFF;
   --ink: #2D2A3D;
-  --ink-soft: #9A93B8;
-  --ink-faint: #C7C2DD;
+  --ink-soft: #6E6690;
+  --ink-faint: #A9A2C9;
 
   --shadow-d: rgba(180,170,220,0.35);
   --shadow-l: rgba(255,255,255,0.9);
@@ -5654,6 +5667,19 @@ document.addEventListener("DOMContentLoaded", () => {
   --confetti-2: #FFD9A0;
   --confetti-3: #A8E6CF;
   --confetti-4: #A8D8FF;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17141F;
+    --card: #221E30;
+    --ink: #F5F3FA;
+    --ink-soft: #B8B2D8;
+    --ink-faint: #7A7398;
+
+    --shadow-d: rgba(0,0,0,0.45);
+    --shadow-l: rgba(255,255,255,0.04);
+  }
 }
 
 * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
@@ -6689,6 +6715,7 @@ body.no-page-scroll #root {
 .settings-icon .tab-svg { width: 19px; height: 19px; }
 .settings-item.danger .settings-icon { color: #d64668; }
 .settings-item.danger small, .settings-item.danger strong { color: #d64668; }
+.settings-legal-note { margin: 16px 0 4px; text-align: center; color: var(--ink-soft); font-size: 10px; font-weight: 600; opacity: .8; }
 .rating-subtitle { font-family: 'DM Mono', monospace; color: var(--ink-soft); font-size: 11px; margin-top: 3px; }
 .rating-options { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; padding: 0 6px 12px; }
 .rating-choice {
