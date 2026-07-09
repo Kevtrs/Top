@@ -3342,22 +3342,34 @@ function renderFriendsTabContent(viewed) {
         <button class="btn-primary" id="btn-invite-first-friend" type="button">Inviter un proche</button>
       </div>`;
   }
+  const viewedTop = allRankings[viewed.id] || [];
+  const viewedWatched = allWatched[viewed.id] || [];
+  const ratings = viewedWatched.map(movie => Number(movie.rating)).filter(Number.isFinite);
+  const average = ratings.length ? (ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length).toFixed(1).replace(".", ",") : "—";
   return `
-    ${renderCollectionIntro("PROCHES", "Amis", `${friends.length} profil${friends.length > 1 ? "s" : ""} dans le groupe`)}
-    <button class="btn-secondary friends-invite-btn" id="btn-invite-friend" type="button">Inviter dans mon cercle</button>
-    <div class="friend-grid">
+    ${renderCollectionIntro("PROCHES", "Amis", `${friends.length} profil${friends.length > 1 ? "s" : ""} dans ton cercle`)}
+    <div class="friend-rail" role="tablist" aria-label="Choisir un profil">
       ${friends.map(p => `
-        <button class="friend-card ${p.id === viewingUser ? "active" : ""}" data-id="${escapeAttr(p.id)}" style="--pc:${escapeAttr(p.color)}" type="button">
-          ${profileAvatarHtml(p.id, 42)}
-          <span>
-            <strong>${escapeHtml(p.name)}</strong>
-            <small>${(allRankings[p.id] || []).length} film${(allRankings[p.id] || []).length > 1 ? "s" : ""} dans son Top</small>
-            ${(p.showcaseBadges || []).length ? `<span class="friend-showcase-row">${p.showcaseBadges.map(b => `<span class="friend-showcase-badge">${challengeBadgeArtHtml(b)}</span>`).join("")}</span>` : ""}
-          </span>
+        <button class="friend-chip ${p.id === viewed.id ? "active" : ""}" data-id="${escapeAttr(p.id)}" type="button" role="tab" aria-selected="${p.id === viewed.id}">
+          <span class="friend-chip-avatar">${profileAvatarHtml(p.id, 52)}</span>
+          <small>${escapeHtml(p.name)}</small>
         </button>
       `).join("")}
+      <button class="friend-chip friend-chip-invite" id="btn-invite-friend" type="button" aria-label="Inviter dans mon cercle">
+        <span class="friend-chip-avatar"><b>+</b></span>
+        <small>Inviter</small>
+      </button>
     </div>
-    <div class="section-label">Classement de ${escapeHtml(viewed.name)}</div>
+    <button class="friend-hero" id="btn-friend-profile" data-id="${escapeAttr(viewed.id)}" type="button" aria-label="Ouvrir le profil de ${escapeAttr(viewed.name)}">
+      ${profileAvatarHtml(viewed.id, 54)}
+      <span class="friend-hero-copy">
+        <strong>${escapeHtml(viewed.name)}</strong>
+        <small>${viewedTop.length} top · ${viewedWatched.length} vu${viewedWatched.length > 1 ? "s" : ""} · ${average} de moyenne</small>
+        ${(viewed.showcaseBadges || []).length ? `<span class="friend-showcase-row">${viewed.showcaseBadges.map(b => `<span class="friend-showcase-badge">${challengeBadgeArtHtml(b)}</span>`).join("")}</span>` : ""}
+      </span>
+      <b class="friend-hero-arrow">›</b>
+    </button>
+    <div class="section-label">Le Top de ${escapeHtml(viewed.name)}</div>
     <div class="rank-list" id="rank-list"></div>`;
 }
 
@@ -3596,7 +3608,19 @@ function attachAppEvents() {
   document.getElementById("btn-invite-first-friend")?.addEventListener("click", createCircleInvite);
   document.getElementById("btn-invite-friend")?.addEventListener("click", createCircleInvite);
 
-  document.querySelectorAll(".profile-chip, .friend-card").forEach(el => {
+  document.querySelectorAll(".friend-chip:not(.friend-chip-invite)").forEach(el => {
+    el.addEventListener("click", () => {
+      if (viewingUser === el.dataset.id) return;
+      viewingUser = el.dataset.id;
+      platformTapFeedback();
+      renderPagePreservingScroll();
+    });
+  });
+  document.getElementById("btn-friend-profile")?.addEventListener("click", () => {
+    openProfileSheet(document.getElementById("btn-friend-profile").dataset.id);
+  });
+
+  document.querySelectorAll(".profile-chip").forEach(el => {
     el.addEventListener("click", () => {
       openProfileSheet(el.dataset.id);
     });
@@ -6478,26 +6502,47 @@ body.no-page-scroll #root {
   color: white; display: flex; align-items: center; justify-content: center;
   font-size: 10px; font-weight: 800;
 }
-.friend-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  width: calc(100% - 40px); max-width: 980px; gap: 12px; margin: 0 auto; padding: 0 0 2px;
+.friend-rail {
+  display: flex; gap: 14px; width: calc(100% - 40px); max-width: 980px; margin: 0 auto 14px;
+  padding: 4px 2px 8px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
 }
-.friend-card {
-  border: none; background: var(--card); border-radius: 20px; min-height: 76px; padding: 12px;
-  display: flex; align-items: center; gap: 11px; text-align: left; color: var(--ink);
-  font-family: 'Plus Jakarta Sans', sans-serif; box-shadow: 5px 5px 14px var(--shadow-d), -5px -5px 14px var(--shadow-l);
-  transition: transform 0.14s cubic-bezier(.2,.8,.2,1), box-shadow 0.14s cubic-bezier(.2,.8,.2,1);
+.friend-rail::-webkit-scrollbar { display: none; }
+.friend-chip {
+  flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  width: 64px; border: none; padding: 0; background: transparent; color: var(--ink);
+  font-family: 'Plus Jakarta Sans', sans-serif;
 }
-.friend-card:active { transform: scale(0.97); }
-.friend-card.active {
-  box-shadow: inset 4px 4px 10px var(--shadow-d), inset -4px -4px 10px var(--shadow-l);
+.friend-chip-avatar {
+  display: grid; place-items: center; width: 60px; height: 60px; border-radius: 50%;
+  padding: 3px; background: var(--card);
+  box-shadow: 4px 4px 10px var(--shadow-d), -4px -4px 10px var(--shadow-l);
+  transition: box-shadow 0.16s, transform 0.16s cubic-bezier(.2,.8,.2,1);
 }
-.friend-card span:not(.avatar-initial-sm) { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.friend-chip:active .friend-chip-avatar { transform: scale(0.94); }
+.friend-chip.active .friend-chip-avatar { box-shadow: 0 0 0 3px var(--lav), 4px 4px 10px var(--shadow-d); }
+.friend-chip .avatar-poster, .friend-chip .avatar-initial-sm { border-radius: 50%; }
+.friend-chip small {
+  max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; font-weight: 700; color: var(--ink-soft);
+}
+.friend-chip.active small { color: var(--ink); font-weight: 800; }
+.friend-chip-invite .friend-chip-avatar { background: transparent; box-shadow: none; border: 2px dashed var(--ink-faint); }
+.friend-chip-invite b { font-size: 24px; font-weight: 600; color: var(--ink-soft); }
+.friend-hero {
+  display: flex; align-items: center; gap: 12px; width: calc(100% - 40px); max-width: 980px;
+  margin: 0 auto 4px; padding: 13px 14px; border: none; border-radius: 20px; text-align: left;
+  color: var(--ink); background: var(--card); font-family: 'Plus Jakarta Sans', sans-serif;
+  box-shadow: 5px 5px 14px var(--shadow-d), -5px -5px 14px var(--shadow-l);
+  transition: transform 0.14s cubic-bezier(.2,.8,.2,1);
+}
+.friend-hero:active { transform: scale(0.98); }
+.friend-hero .avatar-poster, .friend-hero .avatar-initial-sm { flex-shrink: 0; border-radius: 16px; }
+.friend-hero-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.friend-hero-copy strong { font-size: 15px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.friend-hero-copy small { font-size: 11px; color: var(--ink-soft); font-weight: 700; }
+.friend-hero-arrow { flex-shrink: 0; font-size: 22px; font-weight: 600; color: var(--ink-faint); }
 .friend-showcase-row { display: flex; gap: 4px; margin-top: 2px; }
 .friend-showcase-badge { display: inline-block; width: 20px; height: 20px; flex-shrink: 0; }
-.friend-card strong { font-size: 14px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.friend-card small { font-size: 11px; color: var(--ink-soft); font-weight: 700; line-height: 1.25; }
-.friends-invite-btn { margin: 0 20px 14px; width: calc(100% - 40px); border-radius: 16px; background: rgba(255,255,255,.56); }
 
 .search-wrap { width: calc(100% - 40px); max-width: 980px; margin: 0 auto; padding: 16px 0 4px; }
 .search-box {
