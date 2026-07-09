@@ -255,7 +255,7 @@ const SAGA_CHALLENGE_DEFS = [
     movieIds: [49051, 57158, 122917]
   },
   {
-    id: "saga-star-wars", name: "Une galaxie très lointaine", symbol: "stars",
+    id: "saga-star-wars", name: "Une galaxie très lointaine", symbol: "stars", legendary: true,
     description: "Complète les neuf épisodes de la saga Skywalker.",
     backdropPath: "/yUiXA68FfQeA8cRBhd0Ao0jIRZt.jpg",
     movieIds: [1893, 1894, 1895, 11, 1891, 1892, 140607, 181808, 181812]
@@ -351,13 +351,13 @@ const SAGA_CHALLENGE_DEFS = [
     movieIds: [70160, 101299, 131631, 131634, 695721]
   },
   {
-    id: "saga-fast-furious", name: "La famille avant tout", symbol: "gauge",
+    id: "saga-fast-furious", name: "La famille avant tout", symbol: "gauge", legendary: true,
     description: "Boucle les dix films principaux de Fast & Furious.",
     backdropPath: "/jY9ef5nqY4xIIMu3yzW3qamUCoi.jpg",
     movieIds: [9799, 584, 9615, 13804, 51497, 82992, 168259, 337339, 385128, 385687]
   },
   {
-    id: "saga-infinity", name: "Pierres d'infini", symbol: "stones",
+    id: "saga-infinity", name: "Pierres d'infini", symbol: "stones", legendary: true,
     description: "Complète les 23 films de l'Infinity Saga Marvel.",
     backdropPath: "/cyecB7godJ6kNHGONFjUyVN9OX5.jpg",
     movieIds: [1726, 1724, 10138, 10195, 1771, 24428, 68721, 76338, 100402, 118340, 99861, 102899, 271110, 284052, 283995, 315635, 284053, 284054, 299536, 363088, 299537, 299534, 429617]
@@ -375,7 +375,7 @@ const SAGA_CHALLENGE_DEFS = [
     movieIds: [176, 215, 214, 663, 11917, 22804, 41439, 298250, 602734, 951491]
   },
   {
-    id: "saga-final-destination", name: "La mort a un plan", symbol: "crack", legendary: true,
+    id: "saga-final-destination", name: "La mort a un plan", symbol: "crack",
     description: "Échappe au destin dans les six films sortis.",
     backdropPath: "/7isarjYDEKZ5t1CgcvbuqEUby8P.jpg",
     movieIds: [9532, 9358, 9286, 19912, 55779, 574475]
@@ -493,6 +493,30 @@ const SAGA_CHALLENGE_DEFS = [
     description: "Ouvre les quatre dossiers Warren de Conjuring.",
     backdropPath: "/ecKQlAEG95k62SMGhvX83oEqANK.jpg",
     movieIds: [138843, 259693, 423108, 1038392]
+  },
+  {
+    id: "saga-pixar", name: "La lampe magique", symbol: "lamp", legendary: true,
+    description: "Complète les 31 longs métrages Pixar sortis au cinéma.",
+    backdropPath: "/o3i6AfTcWAuNvzAUV3q5lOmi6Gx.jpg",
+    movieIds: [862, 9487, 863, 585, 12, 9806, 920, 2062, 10681, 14160, 10193, 49013, 62177, 62211, 150540, 105864, 127380, 260514, 354912, 260513, 301528, 508439, 508442, 508943, 508947, 718789, 976573, 1022789, 1022787, 1327819, 1084244]
+  },
+  {
+    id: "saga-ghibli", name: "L'esprit de la forêt", symbol: "acorn", legendary: true,
+    description: "Voyage à travers les 22 films du Studio Ghibli.",
+    backdropPath: "/dyJvKsNs2KP8qQnAXbRwDjblViy.jpg",
+    movieIds: [10515, 12477, 8392, 16859, 15080, 11621, 21057, 15283, 37797, 128, 16198, 129, 15370, 4935, 37933, 12429, 51739, 83389, 149870, 149871, 242828, 508883]
+  },
+  {
+    id: "saga-wizarding-world", name: "Après tout ce temps", symbol: "castle", legendary: true,
+    description: "Complète le Monde des Sorciers : Harry Potter et les Animaux fantastiques.",
+    backdropPath: "/8Qsr8pvDL3s1jNZQ4HK1d1Xlvnh.jpg",
+    movieIds: [671, 672, 673, 674, 675, 767, 12444, 12445, 259316, 338952, 338953]
+  },
+  {
+    id: "saga-pantheon", name: "Le Panthéon", symbol: "laurel", legendary: true,
+    description: "Vingt chefs-d'œuvre qui ont marqué l'histoire du cinéma.",
+    backdropPath: "/zfbjgQE1uSd9wiPTX4VzsLi0rGG.jpg",
+    movieIds: [278, 238, 240, 389, 424, 680, 13, 155, 550, 27205, 157336, 603, 769, 274, 105, 122, 129, 496243, 244786, 598]
   }
 ].map(def => ({
   ...def,
@@ -1907,7 +1931,11 @@ function sagaSymbolSvg(symbol) {
     pumpkin: '<path d="M24 13c-3-3-8-3-11 0-4 4-5 12-2 19 2 5 6 8 9 7 1 1 3 1 4 0h0c1 1 3 1 4 0 3 1 7-2 9-7 3-7 2-15-2-19-3-3-8-3-11 0Z"/><path d="M24 13c-1-4 0-7 3-8"/><path d="m17 22 4 3-4 2M31 22l-4 3 4 2M18 33c4 3 8 3 12 0"/>',
     paw: '<circle cx="14" cy="18" r="4"/><circle cx="24" cy="13" r="4"/><circle cx="34" cy="18" r="4"/><path d="M24 23c-6 0-11 5-11 10 0 4 3 6 6 5 2-1 3-1 5-1s3 0 5 1c3 1 6-1 6-5 0-5-5-10-11-10Z"/>',
     key: '<circle cx="15" cy="15" r="9"/><circle cx="15" cy="15" r="3"/><path d="m21 21 20 20M33 33l5-5M38 38l4-4"/>',
-    cross: '<path d="M20 6h8v10h10v8H28v18h-8V24H10v-8h10Z"/>'
+    cross: '<path d="M20 6h8v10h10v8H28v18h-8V24H10v-8h10Z"/>',
+    lamp: '<path d="M14 40h14"/><path d="M21 40 17 24l10-8"/><path d="M27 16c-3-4-2-8 2-10 4-2 8 0 9 4 1 3-1 6-4 7-3 1-6 0-7-1Z"/><path d="m13 25 4-1"/>',
+    acorn: '<path d="M15 20c0-8 4-13 9-13s9 5 9 13Z"/><path d="M15 20h18c0 10-5 17-9 20-4-3-9-10-9-20Z"/><path d="M24 7c0-2 1-3 3-4"/>',
+    castle: '<path d="M9 42V16l4 3 4-3 4 3 4-3 4 3 4-3 4 3v23"/><path d="M9 42h30"/><path d="M20 42v-9a4 4 0 0 1 8 0v9"/><path d="M13 16V8m22 8V8"/><path d="M13 8h4v4m14-4h4v4"/>',
+    laurel: '<path d="M12 8c-3 8-3 17 2 24 3 4 6 6 10 7 4-1 7-3 10-7 5-7 5-16 2-24"/><path d="M12 14c3 0 5 2 5 5-3 0-5-2-5-5ZM36 14c-3 0-5 2-5 5 3 0 5-2 5-5ZM13 23c3 0 6 2 6 5-3 0-6-2-6-5ZM35 23c-3 0-6 2-6 5 3 0 6-2 6-5ZM17 31c3 1 5 3 5 6-4-1-5-3-5-6ZM31 31c-3 1-5 3-5 6 4-1 5-3 5-6Z"/>'
   };
   return `<svg viewBox="0 0 48 48" aria-hidden="true">${symbols[symbol] || symbols.stars}</svg>`;
 }
