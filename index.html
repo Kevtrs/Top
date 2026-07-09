@@ -132,6 +132,110 @@ const CINEMA_CHALLENGE_DEFS = [
     badgeIcon: "./badge-assets/users-group.svg",
     badgeShape: "family",
     badgePosition: "50% 46%"
+  },
+  {
+    id: "big-laugh",
+    art: "comedy",
+    name: "Fou rire garanti",
+    description: "Les films qui font du bien au moral.",
+    targetLabel: "8 comédies vues",
+    threshold: 8,
+    genreIds: [35],
+    badgePhoto: "./badge-assets/genre-comedy.jpg",
+    badgeIcon: "./badge-assets/mood-smile.svg",
+    badgeShape: "genre",
+    badgePosition: "50% 50%"
+  },
+  {
+    id: "love-at-first-sight",
+    art: "romance",
+    name: "Coup de foudre",
+    description: "Les histoires d'amour qui restent en tête.",
+    targetLabel: "8 films romantiques vus",
+    threshold: 8,
+    genreIds: [10749],
+    badgePhoto: "./badge-assets/genre-romance.jpg",
+    badgeIcon: "./badge-assets/heart.svg",
+    badgeShape: "genre",
+    badgePosition: "50% 50%"
+  },
+  {
+    id: "wide-horizon",
+    art: "adventure",
+    name: "Grand large",
+    description: "Expéditions, quêtes et terres inconnues.",
+    targetLabel: "8 films d'aventure vus",
+    threshold: 8,
+    genreIds: [12],
+    badgePhoto: "./badge-assets/genre-adventure.jpg",
+    badgeIcon: "./badge-assets/map.svg",
+    badgeShape: "genre",
+    badgePosition: "50% 40%"
+  },
+  {
+    id: "other-worlds",
+    art: "fantasy",
+    name: "Autres mondes",
+    description: "Magie, créatures et univers imaginaires.",
+    targetLabel: "8 films fantastiques vus",
+    threshold: 8,
+    genreIds: [14],
+    badgePhoto: "./badge-assets/genre-fantasy.jpg",
+    badgeIcon: "./badge-assets/sparkles.svg",
+    badgeShape: "genre",
+    badgePosition: "50% 55%"
+  },
+  {
+    id: "battlefield",
+    art: "war",
+    name: "Champs de bataille",
+    description: "Les grands récits de guerre à l'écran.",
+    targetLabel: "6 films de guerre vus",
+    threshold: 6,
+    genreIds: [10752],
+    badgePhoto: "./badge-assets/genre-war.jpg",
+    badgeIcon: "./badge-assets/shield.svg",
+    badgeShape: "genre",
+    badgePosition: "50% 40%"
+  },
+  {
+    id: "far-west",
+    art: "western",
+    name: "Far West",
+    description: "Duels, grands espaces et chevauchées.",
+    targetLabel: "5 westerns vus",
+    threshold: 5,
+    genreIds: [37],
+    badgePhoto: "./badge-assets/genre-western.jpg",
+    badgeIcon: "./badge-assets/cactus.svg",
+    badgeShape: "genre",
+    badgePosition: "50% 60%"
+  },
+  {
+    id: "in-tune",
+    art: "musical",
+    name: "En chanson",
+    description: "Quand le cinéma se met à chanter et danser.",
+    targetLabel: "5 films musicaux vus",
+    threshold: 5,
+    genreIds: [10402],
+    badgePhoto: "./badge-assets/genre-musical.jpg",
+    badgeIcon: "./badge-assets/music.svg",
+    badgeShape: "genre",
+    badgePosition: "60% 55%"
+  },
+  {
+    id: "true-stories",
+    art: "documentary",
+    name: "Histoires vraies",
+    description: "Le monde réel, filmé au plus près.",
+    targetLabel: "5 documentaires vus",
+    threshold: 5,
+    genreIds: [99],
+    badgePhoto: "./badge-assets/genre-documentary.jpg",
+    badgeIcon: "./badge-assets/world.svg",
+    badgeShape: "genre",
+    badgePosition: "50% 55%"
   }
 ];
 
@@ -317,6 +421,78 @@ const SAGA_CHALLENGE_DEFS = [
     description: "Termine la trilogie animée Dragons.",
     backdropPath: "/59vDC1BuEQvti24OMr0ZvtAK6R1.jpg",
     movieIds: [10191, 82702, 166428]
+  },
+  {
+    id: "saga-spiderman-raimi", name: "Un grand pouvoir...", symbol: "web",
+    description: "Enfile le costume dans la trilogie de Sam Raimi.",
+    backdropPath: "/zQ8AxTPiCiS5nnwXpwTBPBHSaa5.jpg",
+    movieIds: [557, 558, 559]
+  },
+  {
+    id: "saga-xmen", name: "L'Institut Xavier", symbol: "dna",
+    description: "Rejoins les mutants de la trilogie X-Men originale.",
+    backdropPath: "/3QUVzbcNyfGe3ocWkYAT8emK8Co.jpg",
+    movieIds: [36657, 36658, 36668]
+  },
+  {
+    id: "saga-avatar", name: "Je te vois", symbol: "tree",
+    description: "Plonge dans Pandora avec les deux films sortis.",
+    backdropPath: "/vL5LR6WdxWPjLPFRLe133jXWsh5.jpg",
+    movieIds: [19995, 76600]
+  },
+  {
+    id: "saga-twilight", name: "Le lion et l'agneau", symbol: "apple",
+    description: "Traverse les cinq chapitres de la saga Twilight.",
+    backdropPath: "/weAYfu6FfrNxEDJ3xH1XpgQcqUv.jpg",
+    movieIds: [8966, 18239, 24021, 50619, 50620]
+  },
+  {
+    id: "saga-star-trek", name: "Longue vie et prospérité", symbol: "delta",
+    description: "Embarque sur l'Enterprise pour les trois films du reboot.",
+    backdropPath: "/q7M0JpPixbEYT8EhnI7wTEMONxz.jpg",
+    movieIds: [13475, 54138, 188927]
+  },
+  {
+    id: "saga-transformers", name: "Plus qu'il n'y paraît", symbol: "gear",
+    description: "Traverse les cinq films Transformers de l'ère Bay.",
+    backdropPath: "/iCDMBi6WLjUBnt24dNwHqqF81UL.jpg",
+    movieIds: [1858, 8373, 38356, 91314, 335988]
+  },
+  {
+    id: "saga-jumanji", name: "Bienvenue dans le jeu", symbol: "dice",
+    description: "Termine les deux niveaux du Jumanji nouvelle génération.",
+    backdropPath: "/rz3TAyd5kmiJmozp3GUbYeB5Kep.jpg",
+    movieIds: [353486, 512200]
+  },
+  {
+    id: "saga-now-you-see-me", name: "Regardez de plus près", symbol: "eye",
+    description: "Suis les Cavaliers dans les trois Insaisissables.",
+    backdropPath: "/xEY0MV2jSQBz9iOJfCFvLTiPGMA.jpg",
+    movieIds: [75656, 291805, 425274]
+  },
+  {
+    id: "saga-halloween", name: "La nuit des masques", symbol: "pumpkin",
+    description: "Survis à la trilogie Halloween de David Gordon Green.",
+    backdropPath: "/8VjIXC2x8SHwAO52rfFpejKL4wc.jpg",
+    movieIds: [424139, 610253, 616820]
+  },
+  {
+    id: "saga-planet-apes", name: "La planète leur appartient", symbol: "paw",
+    description: "Suis César dans la trilogie Planète des singes.",
+    backdropPath: "/6cCF0KMUO2QmrVsQFujkQduREXX.jpg",
+    movieIds: [61791, 119450, 281338]
+  },
+  {
+    id: "saga-national-treasure", name: "Chasse au trésor", symbol: "key",
+    description: "Décode les deux aventures de Benjamin Gates.",
+    backdropPath: "/9EnZD3ZWjpJy4IPoQkqTzxvZrso.jpg",
+    movieIds: [2059, 6637]
+  },
+  {
+    id: "saga-conjuring", name: "Chasseurs de démons", symbol: "cross",
+    description: "Ouvre les quatre dossiers Warren de Conjuring.",
+    backdropPath: "/ecKQlAEG95k62SMGhvX83oEqANK.jpg",
+    movieIds: [138843, 259693, 423108, 1038392]
   }
 ].map(def => ({
   ...def,
@@ -330,6 +506,22 @@ const DIRECTOR_CHALLENGE_OVERRIDES = {
   138: {
     name: "100% Tarantino",
     movieIds: [500, 680, 184, 24, 393, 1991, 16869, 68718, 273248, 466272]
+  },
+  488: {
+    name: "Le roi du blockbuster",
+    movieIds: [578, 840, 85, 601, 329, 424, 857, 180, 640, 333339]
+  },
+  137427: {
+    name: "Architecte du futur",
+    movieIds: [46738, 146233, 181886, 273481, 329865, 335984, 438631, 693134]
+  },
+  5655: {
+    name: "Symétrie parfaite",
+    movieIds: [11545, 9428, 421, 4538, 10315, 83666, 120467, 399174, 542178, 747188]
+  },
+  2636: {
+    name: "Maître du suspense",
+    movieIds: [223, 303, 1580, 845, 521, 567, 381, 426, 213, 539, 571]
   }
 };
 
@@ -1596,7 +1788,7 @@ function cinemaChallengeCatalog() {
       art: "director",
       group: "auteurs",
       name: override?.name || `Signature ${shortName}`,
-      description: override ? "Complète ses dix longs métrages principaux." : "Explore sa mise en scène film après film.",
+      description: override ? `Complète ses ${threshold} longs métrages principaux.` : "Explore sa mise en scène film après film.",
       targetLabel: override ? `${threshold} films principaux` : "5 films du même réalisateur",
       threshold,
       current,
@@ -1635,7 +1827,7 @@ function cinemaChallengeCatalog() {
       art: "actor",
       group: "auteurs",
       name: override?.name || `Fidèle à ${shortName}`,
-      description: override ? "Complète ses dix films les plus marquants." : "Suis-le de film en film.",
+      description: override ? `Complète ses ${threshold} films les plus marquants.` : "Suis-le de film en film.",
       targetLabel: override ? `${threshold} films principaux` : "5 films avec le même acteur",
       threshold,
       current,
@@ -1703,7 +1895,19 @@ function sagaSymbolSvg(symbol) {
     spade: '<path d="M24 6c7 8 14 14 14 21a9 9 0 0 1-14 7 9 9 0 0 1-14-7c0-7 7-13 14-21Z"/><path d="M24 32v10"/><path d="m18 42 6-4 6 4"/>',
     umbrella: '<path d="M6 24a18 18 0 0 1 36 0Z"/><path d="M24 24v18a4 4 0 0 1-6 3"/><path d="M24 6v4"/>',
     goggles: '<circle cx="15" cy="24" r="9"/><circle cx="33" cy="24" r="9"/><path d="M24 24h0"/><path d="M9 18c-3 0-5 2-5 5M39 18c3 0 5 2 5 5"/>',
-    dragon: '<path d="M6 30c6-2 10-8 12-16 2 6 3 11 2 16 5-3 9-9 10-17 3 7 2 14-3 20-6 7-14 9-21 6Z"/><path d="M20 30c2 3 6 4 9 2"/>'
+    dragon: '<path d="M6 30c6-2 10-8 12-16 2 6 3 11 2 16 5-3 9-9 10-17 3 7 2 14-3 20-6 7-14 9-21 6Z"/><path d="M20 30c2 3 6 4 9 2"/>',
+    web: '<path d="M24 6v36M9 12l30 24M39 12 9 36"/><path d="M15 17c6 4 12 4 18 0M12 30c8-5 16-5 24 0M18 42c4-6 8-6 12 0"/>',
+    dna: '<path d="M15 6c0 12 18 12 18 24M33 6c0 12-18 12-18 24M15 30c0 6 4 9 9 9s9-3 9-9"/><path d="M17 12h14M17 24h14M17 36h14"/>',
+    tree: '<path d="M24 42V20"/><path d="M24 20c-8 0-13-6-13-13 8 0 13 5 13 13Z"/><path d="M24 26c8 0 13-6 13-13-8 0-13 5-13 13Z"/><path d="M16 42h16"/>',
+    apple: '<path d="M24 15c-6-4-13-1-14 6-1 8 4 17 9 20 2 1 4 1 5 0 1 1 3 1 5 0 5-3 10-12 9-20-1-7-8-10-14-6Z"/><path d="M24 15c0-4 2-7 6-8"/>',
+    delta: '<path d="M24 5 38 41c-9-5-19-5-28 0Z"/><path d="M24 19l5 13c-3-2-7-2-10 0Z"/>',
+    gear: '<circle cx="24" cy="24" r="7"/><path d="M24 3v6M24 39v6M3 24h6M39 24h6M9 9l4 4M35 35l4 4M39 9l-4 4M13 35l-4 4"/>',
+    dice: '<rect x="8" y="8" width="32" height="32" rx="7"/><circle cx="17" cy="17" r="2"/><circle cx="31" cy="17" r="2"/><circle cx="24" cy="24" r="2"/><circle cx="17" cy="31" r="2"/><circle cx="31" cy="31" r="2"/>',
+    eye: '<path d="M4 24c6-9 13-13 20-13s14 4 20 13c-6 9-13 13-20 13S10 33 4 24Z"/><circle cx="24" cy="24" r="6"/><circle cx="24" cy="24" r="1"/>',
+    pumpkin: '<path d="M24 13c-3-3-8-3-11 0-4 4-5 12-2 19 2 5 6 8 9 7 1 1 3 1 4 0h0c1 1 3 1 4 0 3 1 7-2 9-7 3-7 2-15-2-19-3-3-8-3-11 0Z"/><path d="M24 13c-1-4 0-7 3-8"/><path d="m17 22 4 3-4 2M31 22l-4 3 4 2M18 33c4 3 8 3 12 0"/>',
+    paw: '<circle cx="14" cy="18" r="4"/><circle cx="24" cy="13" r="4"/><circle cx="34" cy="18" r="4"/><path d="M24 23c-6 0-11 5-11 10 0 4 3 6 6 5 2-1 3-1 5-1s3 0 5 1c3 1 6-1 6-5 0-5-5-10-11-10Z"/>',
+    key: '<circle cx="15" cy="15" r="9"/><circle cx="15" cy="15" r="3"/><path d="m21 21 20 20M33 33l5-5M38 38l4-4"/>',
+    cross: '<path d="M20 6h8v10h10v8H28v18h-8V24H10v-8h10Z"/>'
   };
   return `<svg viewBox="0 0 48 48" aria-hidden="true">${symbols[symbol] || symbols.stars}</svg>`;
 }
@@ -1770,11 +1974,15 @@ function renderChallengesGallery(gallery, closeAfterSelect = false) {
     visibleCatalog = catalog.filter(challenge => challenge.group === "sagas" || challenge.group === "legendary");
   }
   const groups = [
-    { id: "auteurs", title: "Signatures", subtitle: "Les cinéastes qui marquent ton Top" },
-    { id: "cinema", title: "Défis cinéma", subtitle: "Des habitudes qui racontent tes goûts" },
+    { id: "auteurs", title: "Signatures", subtitle: "Les cinéastes et acteurs qui marquent tes films" },
+    { id: "cinema", title: "Genres & découvertes", subtitle: "Explore tous les styles de cinéma" },
     { id: "sagas", title: "Grandes sagas", subtitle: "Tous les films sont nécessaires" },
     { id: "legendary", title: "Collections légendaires", subtitle: "Les marathons les plus exigeants" }
   ];
+  const challengeSortWeight = challenge => {
+    if (challenge.completed) return 2;
+    return challengeProgress(challenge) > 0 ? 0 : 1;
+  };
   const tileHtml = challenge => {
     const percent = Math.round(challengeProgress(challenge) * 100);
     const selected = active?.id === challenge.id;
@@ -1790,9 +1998,13 @@ function renderChallengesGallery(gallery, closeAfterSelect = false) {
       </button>`;
   };
   gallery.innerHTML = groups.map(group => {
-    const challenges = visibleCatalog.filter(challenge => challenge.group === group.id);
+    const challenges = visibleCatalog
+      .filter(challenge => challenge.group === group.id)
+      .sort((a, b) => challengeSortWeight(a) - challengeSortWeight(b) || challengeProgress(b) - challengeProgress(a));
     if (!challenges.length) return "";
-    return `<section class="cinema-challenge-group"><div class="cinema-challenge-group-heading"><strong>${escapeHtml(group.title)}</strong><span>${escapeHtml(group.subtitle)}</span></div>${challenges.map(tileHtml).join("")}</section>`;
+    const groupTotal = catalog.filter(challenge => challenge.group === group.id);
+    const groupDone = groupTotal.filter(challenge => challenge.completed).length;
+    return `<section class="cinema-challenge-group"><div class="cinema-challenge-group-heading"><strong>${escapeHtml(group.title)}<em class="cinema-challenge-group-count">${groupDone} / ${groupTotal.length}</em></strong><span>${escapeHtml(group.subtitle)}</span></div>${challenges.map(tileHtml).join("")}</section>`;
   }).join("") || `<div class="badge-filter-empty">Aucun badge dans cette catégorie pour le moment.</div>`;
   gallery.querySelectorAll(".cinema-challenge-tile:not([disabled])").forEach(button => {
     button.addEventListener("click", () => {
@@ -3002,7 +3214,7 @@ function renderBadgesTabContent() {
   const unlocked = catalog.filter(challenge => challenge.completed).length;
   const showcase = myShowcaseBadges();
   const filters = [
-    { id: "progress", label: "À finir" },
+    { id: "progress", label: "En cours" },
     { id: "unlocked", label: "Gagnés" },
     { id: "sagas", label: "Sagas" },
     { id: "all", label: "Tous" }
@@ -3036,7 +3248,7 @@ function attachBadgesTabEvents() {
     btn.addEventListener("click", () => {
       if (badgeGalleryFilter === btn.dataset.filter) return;
       badgeGalleryFilter = btn.dataset.filter;
-      renderPage();
+      renderPagePreservingScroll();
     });
   });
   document.getElementById("btn-open-challenges")?.addEventListener("click", openChallengesSheet);
@@ -6417,6 +6629,17 @@ body.no-page-scroll #root {
 .badge-filter-btn.active {
   color: var(--lav-deep); background: var(--card);
   box-shadow: 3px 3px 7px var(--shadow-d), -3px -3px 7px var(--shadow-l);
+}
+@media (prefers-color-scheme: dark) {
+  .badge-filter-bar {
+    background: rgba(255,255,255,.07);
+    box-shadow: inset 2px 2px 5px rgba(0,0,0,.35), inset -2px -2px 5px rgba(255,255,255,.03);
+  }
+  .badge-filter-btn.active { color: var(--lav); }
+}
+.cinema-challenge-group-count {
+  margin-left: 8px; font-style: normal; font-family: 'DM Mono', monospace;
+  font-size: 10px; font-weight: 500; color: var(--ink-soft);
 }
 .badge-filter-empty {
   padding: 24px 14px; border-radius: 14px; background: var(--card); color: var(--ink-soft);
