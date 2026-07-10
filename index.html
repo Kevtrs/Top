@@ -4635,8 +4635,13 @@ function topDuelPairs(list) {
       if (seen.has(key)) continue;
       seen.add(key);
       pairs.push([a.id, b.id]);
-      if (pairs.length >= 8) return pairs;
     }
+  }
+  // Mélange pour que la session pioche dans tout le Top dès le début,
+  // pas seulement dans les films proches du haut du classement.
+  for (let i = pairs.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pairs[i], pairs[j]] = [pairs[j], pairs[i]];
   }
   return pairs;
 }
