@@ -3585,8 +3585,8 @@ function renderMovieNightInvitePicker() {
   const friends = friendProfiles();
   zone.innerHTML = friends.length ? friends.map(p => `
     <button class="movie-night-friend-row ${movieNightInviteSelection.has(p.id) ? "selected" : ""}" data-id="${escapeAttr(p.id)}" type="button">
-      ${profileAvatarHtml(p.id, 40)}
-      <span>${escapeHtml(p.name)}</span>
+      <span class="movie-night-friend-avatar">${profileAvatarHtml(p.id, 40)}</span>
+      <span class="movie-night-friend-name">${escapeHtml(p.name)}</span>
       <i class="movie-night-friend-check">${tabIconHtml("check")}</i>
     </button>
   `).join("") : `<p class="movie-night-empty">Invite d'abord des proches dans ton cercle.</p>`;
@@ -7825,7 +7825,8 @@ body.no-page-scroll #root {
   display: flex; align-items: center; gap: 11px; padding: 10px 12px; border: none; border-radius: 16px;
   background: var(--bg); color: var(--ink); font-family: 'Plus Jakarta Sans', sans-serif; text-align: left;
 }
-.movie-night-friend-row span { flex: 1; font-size: 13px; font-weight: 700; }
+.movie-night-friend-avatar { flex-shrink: 0; display: inline-flex; }
+.movie-night-friend-name { flex: 1; font-size: 13px; font-weight: 700; }
 .movie-night-friend-check { display: none; width: 20px; height: 20px; color: var(--lav-deep); }
 .movie-night-friend-row.selected { box-shadow: 0 0 0 2px var(--lav) inset; }
 .movie-night-friend-row.selected .movie-night-friend-check { display: block; }
