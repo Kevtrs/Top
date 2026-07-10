@@ -1611,6 +1611,35 @@ function unlockedChallengeIds(profileId = currentUser) {
     return new Set();
   }
 }
+function unlockedBadgeCountForProfile(profileId) {
+  const seenMovies = challengeSeenMovies(profileId);
+  if (!seenMovies.length) return 0;
+  const seenIds = new Set(seenMovies.map(movie => Number(movie.id)));
+  let count = 0;
+  CINEMA_CHALLENGE_DEFS.forEach(def => {
+    if (def.social) return;
+    if (seenMovies.filter(movie => baseChallengeMatchesMovie(movie, def)).length >= def.threshold) count += 1;
+  });
+  const socialDef = CINEMA_CHALLENGE_DEFS.find(def => def.social);
+  if (socialDef) {
+    const groupState = groupChallengeState();
+    if (groupState.available && groupState.current >= socialDef.threshold) count += 1;
+  }
+  SAGA_CHALLENGE_DEFS.forEach(def => {
+    if (def.movieIds.every(id => seenIds.has(Number(id)))) count += 1;
+  });
+  const director = preferredDirectorFromSeen(seenMovies);
+  if (director) {
+    const override = DIRECTOR_CHALLENGE_OVERRIDES[director.id];
+    if (override ? override.movieIds.every(id => seenIds.has(Number(id))) : director.count >= 5) count += 1;
+  }
+  const actor = preferredActorFromSeen(seenMovies);
+  if (actor) {
+    const override = ACTOR_CHALLENGE_OVERRIDES[actor.id];
+    if (override ? override.movieIds.every(id => seenIds.has(Number(id))) : actor.count >= 5) count += 1;
+  }
+  return count;
+}
 function challengeFilmographyKey(directorId) {
   return `letop_director_films_${directorId}`;
 }
@@ -3346,15 +3375,18 @@ function renderFriendsTabContent(viewed) {
   const viewedWatched = allWatched[viewed.id] || [];
   const ratings = viewedWatched.map(movie => Number(movie.rating)).filter(Number.isFinite);
   const average = ratings.length ? (ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length).toFixed(1).replace(".", ",") : "—";
+  const viewedBadges = unlockedBadgeCountForProfile(viewed.id);
   return `
     ${renderCollectionIntro("PROCHES", "Amis", `${friends.length} profil${friends.length > 1 ? "s" : ""} dans ton cercle`)}
     <div class="friend-rail" role="tablist" aria-label="Choisir un profil">
-      ${friends.map(p => `
+      ${friends.map(p => {
+        const badgeCount = unlockedBadgeCountForProfile(p.id);
+        return `
         <button class="friend-chip ${p.id === viewed.id ? "active" : ""}" data-id="${escapeAttr(p.id)}" type="button" role="tab" aria-selected="${p.id === viewed.id}">
-          <span class="friend-chip-avatar">${profileAvatarHtml(p.id, 52)}</span>
+          <span class="friend-chip-avatar">${profileAvatarHtml(p.id, 52)}${badgeCount ? `<i class="friend-chip-badges" aria-label="${badgeCount} badges gagnés">${badgeCount}</i>` : ""}</span>
           <small>${escapeHtml(p.name)}</small>
-        </button>
-      `).join("")}
+        </button>`;
+      }).join("")}
       <button class="friend-chip friend-chip-invite" id="btn-invite-friend" type="button" aria-label="Inviter dans mon cercle">
         <span class="friend-chip-avatar"><b>+</b></span>
         <small>Inviter</small>
@@ -3364,7 +3396,7 @@ function renderFriendsTabContent(viewed) {
       ${profileAvatarHtml(viewed.id, 54)}
       <span class="friend-hero-copy">
         <strong>${escapeHtml(viewed.name)}</strong>
-        <small>${viewedTop.length} top · ${viewedWatched.length} vu${viewedWatched.length > 1 ? "s" : ""} · ${average} de moyenne</small>
+        <small>${viewedTop.length} top · ${viewedWatched.length} vu${viewedWatched.length > 1 ? "s" : ""} · ${average} de moyenne · ${viewedBadges} badge${viewedBadges > 1 ? "s" : ""}</small>
         ${(viewed.showcaseBadges || []).length ? `<span class="friend-showcase-row">${viewed.showcaseBadges.map(b => `<span class="friend-showcase-badge">${challengeBadgeArtHtml(b)}</span>`).join("")}</span>` : ""}
       </span>
       <b class="friend-hero-arrow">›</b>
@@ -4833,7 +4865,7 @@ function renderProfileSheetContent(profileId) {
       <div class="portrait-stats"><div><b>${stats.ranked.length}</b><span>dans son Top</span></div><div><b>${stats.watched.length}</b><span>films vus</span></div><div><b>${stats.average === null ? "—" : stats.average.toFixed(1).replace(".", ",")}</b><span>note moyenne</span></div></div>
       <div class="portrait-section-title"><strong>Sa signature cinéma</strong><span>FILMS VUS</span></div>
       <div class="portrait-signature">${portraitSignatureRow("RÉALISATEUR FÉTICHE", stats.directors, "director")}${portraitSignatureRow("ACTEUR INCONTOURNABLE", stats.actors, "actor")}${portraitSignatureRow("UNIVERS DE PRÉDILECTION", stats.genres, "genre")}</div>
-      <div class="portrait-section-title"><strong>Badges en vitrine</strong><span>${stats.badges.length} / 3</span></div>
+      <div class="portrait-section-title"><strong>Badges en vitrine</strong><span>${unlockedBadgeCountForProfile(profileId)} GAGNÉS</span></div>
       <div class="portrait-badges">${stats.badges.length ? stats.badges.map(badge => `<button data-badge-id="${escapeAttr(badge.id)}" type="button">${challengeBadgeArtHtml(badge)}<small>${escapeHtml(badge.name)}</small></button>`).join("") : `<p>${isMe ? "Choisis jusqu'à trois badges gagnés depuis l'onglet Badges." : "Aucun badge mis en avant pour le moment."}</p>`}</div>
       ${!isMe ? `<button class="btn-secondary portrait-view-top" id="btn-profile-view-top" type="button">Voir le Top de ${escapeHtml(stats.profile.name)}</button>` : ""}
     </div></div>`;
@@ -6513,10 +6545,18 @@ body.no-page-scroll #root {
   font-family: 'Plus Jakarta Sans', sans-serif;
 }
 .friend-chip-avatar {
-  display: grid; place-items: center; width: 60px; height: 60px; border-radius: 50%;
+  position: relative; display: grid; place-items: center; width: 60px; height: 60px; border-radius: 50%;
   padding: 3px; background: var(--card);
   box-shadow: 4px 4px 10px var(--shadow-d), -4px -4px 10px var(--shadow-l);
   transition: box-shadow 0.16s, transform 0.16s cubic-bezier(.2,.8,.2,1);
+}
+.friend-chip-badges {
+  position: absolute; right: -3px; bottom: -3px; z-index: 2;
+  min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px;
+  display: grid; place-items: center; font-style: normal;
+  font-family: 'DM Mono', monospace; font-size: 10px; font-weight: 700;
+  color: var(--gold-deep); background: var(--gold);
+  box-shadow: 0 2px 5px rgba(45,42,61,.25), 0 0 0 2px var(--bg);
 }
 .friend-chip:active .friend-chip-avatar { transform: scale(0.94); }
 .friend-chip.active .friend-chip-avatar { box-shadow: 0 0 0 3px var(--lav), 4px 4px 10px var(--shadow-d); }
