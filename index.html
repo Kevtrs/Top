@@ -317,6 +317,7 @@ let recentExpanded = false;
 let incomingRecosExpanded = false;
 let draggedIndex = null;
 let touchDragState = null;
+let topDuelSession = null;
 let pendingRatingMovie = null;
 let pendingRatingOrigin = null;
 let pendingRatingRecoDoc = null;
@@ -2253,6 +2254,15 @@ function renderTopTabContent() {
   return `
     ${renderCollectionIntro("CLASSEMENT", "Mon Top", `${count} film${count > 1 ? "s" : ""} classé${count > 1 ? "s" : ""}`, "top")}
     <button class="portrait-wrapped-btn" id="btn-open-portrait-story" type="button"><span>✦</span><div><strong>Voir mon portrait cinéma</strong><small>Un carrousel de statistiques à partager</small></div><b>›</b></button>
+    ${count >= 2 ? `
+    <button class="top-duel-cta" id="btn-open-top-duel" type="button">
+      ${surfaceIconHtml("grip", "top-duel-cta-icon")}
+      <span class="top-duel-cta-copy">
+        <strong>Classer avec des duels</strong>
+        <small>Deux films s'affrontent, tu choisis, ton Top se range.</small>
+      </span>
+      <b>›</b>
+    </button>` : ""}
     <div class="rank-list" id="rank-list"></div>`;
 }
 
@@ -2539,6 +2549,7 @@ function attachAppEvents() {
   document.getElementById("btn-settings")?.addEventListener("click", openSettingsSheet);
   document.getElementById("btn-open-my-profile")?.addEventListener("click", () => openProfileSheet(currentUser));
   document.getElementById("btn-open-portrait-story")?.addEventListener("click", () => openPortraitStory(currentUser));
+  document.getElementById("btn-open-top-duel")?.addEventListener("click", openTopDuelSheet);
 
   document.querySelectorAll(".app-tab-item").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -2583,7 +2594,7 @@ function attachAppEvents() {
       danger: true,
       onConfirm: () => {
       saveRankingToCloud(currentUser, []).catch(() => showToast("Erreur d'enregistrement"));
-      renderRanked();
+      renderPagePreservingScroll();
       showToast("Classement réinitialisé");
       }
     });
@@ -2821,7 +2832,10 @@ function addToRanked(movie) {
   const progressSnapshot = activeChallengeProgressSnapshot();
   const updated = [...list, simplifyMovie(movie)];
   saveRankingToCloud(currentUser, updated).catch(() => showToast("Erreur d'enregistrement"));
-  if (viewingUser === currentUser) renderRanked();
+  if (viewingUser === currentUser) {
+    if (activeTab === "top") renderPagePreservingScroll();
+    else renderRanked();
+  }
   showToast(`${movie.title} ajouté en position ${updated.length}`);
   setTimeout(() => announceChallengeProgress(progressSnapshot), 500);
 }
@@ -3022,14 +3036,16 @@ function removeFromTop(movieId) {
   const updated = previous.filter(m => m.id !== movieId);
   if (!removed) return;
   saveRankingToCloud(currentUser, updated).catch(() => showToast("Erreur d'enregistrement"));
-  renderRanked();
+  if (activeTab === "top") renderPagePreservingScroll();
+  else renderRanked();
   showToast(`${removed.title} retiré du Top`, {
     label: "Annuler",
     onClick: () => {
       const restored = [...myRanked()];
       if (!restored.some(movie => movie.id === removed.id)) restored.splice(Math.min(removedIndex, restored.length), 0, removed);
       saveRankingToCloud(currentUser, restored).catch(() => showToast("Erreur d'enregistrement"));
-      renderRanked();
+      if (activeTab === "top") renderPagePreservingScroll();
+      else renderRanked();
     }
   });
 }
@@ -3135,7 +3151,8 @@ function closeOverlayElement(overlay) {
     "badge-unlock-overlay": closeBadgeUnlockSheet,
     "confirm-overlay": closeConfirmSheet,
     "rating-overlay": closeRatingSheet,
-    "tonight-pick-overlay": closeTonightPickSheet
+    "tonight-pick-overlay": closeTonightPickSheet,
+    "top-duel-overlay": closeTopDuelSheet
   };
   (closers[overlay.id] || (() => overlay.classList.remove("show")))();
 }
@@ -3578,6 +3595,165 @@ function moveMovie(fromIdx, toIdx, insertAfter) {
       if (firstCard) fireConfetti(firstCard);
     }, 80);
   }
+}
+
+function topDuelPairs(list) {
+  const pairs = [];
+  const seen = new Set();
+  const maxGap = Math.min(4, list.length - 1);
+  for (let gap = 1; gap <= maxGap; gap += 1) {
+    for (let i = 0; i + gap < list.length; i += 1) {
+      const a = list[i];
+      const b = list[i + gap];
+      if (!a || !b) continue;
+      const key = `${a.id}:${b.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      pairs.push([a.id, b.id]);
+      if (pairs.length >= 8) return pairs;
+    }
+  }
+  return pairs;
+}
+
+function topDuelMovieById(id) {
+  return myRanked().find(movie => Number(movie.id) === Number(id)) || null;
+}
+
+function topDuelCurrentPair() {
+  if (!topDuelSession) return null;
+  while (topDuelSession.index < topDuelSession.pairs.length) {
+    const [leftId, rightId] = topDuelSession.pairs[topDuelSession.index];
+    const left = topDuelMovieById(leftId);
+    const right = topDuelMovieById(rightId);
+    if (left && right && Number(left.id) !== Number(right.id)) return [left, right];
+    topDuelSession.index += 1;
+  }
+  return null;
+}
+
+function topDuelRank(movieId) {
+  return myRanked().findIndex(movie => Number(movie.id) === Number(movieId)) + 1;
+}
+
+function topDuelMovieCard(movie) {
+  const poster = movie.poster_path ? TMDB_IMG + movie.poster_path : "";
+  const year = movie.release_date ? escapeHtml(String(movie.release_date).slice(0, 4)) : "????";
+  const rating = movie.vote_average ? Number(movie.vote_average).toFixed(1) : "—";
+  return `
+    <button class="top-duel-choice" data-movie-id="${escapeAttr(movie.id)}" type="button">
+      ${poster ? `<img src="${poster}" alt="${escapeAttr(movie.title)}">` : `<span class="top-duel-poster-empty">${escapeHtml(movie.title)}</span>`}
+      <strong>${escapeHtml(movie.title)}</strong>
+      <small>#${topDuelRank(movie.id)} · ${year} · ⭐ ${rating}</small>
+      <span>${surfaceIconHtml("check", "top-duel-choice-icon")} Je préfère</span>
+    </button>`;
+}
+
+function renderTopDuelSheet() {
+  const overlay = document.getElementById("top-duel-overlay");
+  const choices = document.getElementById("top-duel-choices");
+  const step = document.getElementById("top-duel-step");
+  const title = document.getElementById("top-duel-title");
+  const message = document.getElementById("top-duel-message");
+  const progress = document.getElementById("top-duel-progress-bar");
+  const undo = document.getElementById("btn-undo-top-duel");
+  const done = document.getElementById("top-duel-done");
+  if (!overlay || !choices || !step || !title || !message || !progress || !undo || !done || !topDuelSession) return;
+
+  const pair = topDuelCurrentPair();
+  const total = Math.max(topDuelSession.pairs.length, 1);
+  const completed = Math.min(topDuelSession.index, topDuelSession.pairs.length);
+  progress.style.width = `${Math.round((completed / total) * 100)}%`;
+  undo.disabled = !topDuelSession.history.length;
+
+  if (!pair) {
+    step.textContent = `${topDuelSession.pairs.length} duel${topDuelSession.pairs.length > 1 ? "s" : ""} terminé${topDuelSession.pairs.length > 1 ? "s" : ""}`;
+    title.textContent = "Classement mis à jour";
+    message.textContent = "Ton Top est plus proche de tes vrais goûts. Tu peux relancer une session quand tu veux.";
+    choices.innerHTML = "";
+    done.classList.add("show");
+    return;
+  }
+
+  const [left, right] = pair;
+  step.textContent = `Duel ${topDuelSession.index + 1} sur ${topDuelSession.pairs.length}`;
+  title.textContent = "Lequel passe au-dessus ?";
+  message.textContent = `Actuellement: #${topDuelRank(left.id)} contre #${topDuelRank(right.id)}.`;
+  done.classList.remove("show");
+  choices.innerHTML = `${topDuelMovieCard(left)}${topDuelMovieCard(right)}`;
+  choices.querySelectorAll(".top-duel-choice").forEach(button => {
+    button.addEventListener("click", () => chooseTopDuelWinner(button.dataset.movieId));
+  });
+}
+
+function openTopDuelSheet() {
+  const list = myRanked();
+  if (!currentUser || list.length < 2) {
+    showToast("Ajoute au moins deux films dans ton Top");
+    return;
+  }
+  topDuelSession = {
+    index: 0,
+    pairs: topDuelPairs(list),
+    history: []
+  };
+  if (!topDuelSession.pairs.length) {
+    showToast("Pas assez de films à comparer");
+    topDuelSession = null;
+    return;
+  }
+  const feedback = document.getElementById("top-duel-feedback");
+  if (feedback) feedback.textContent = "On commence par comparer des films proches dans ton classement.";
+  renderTopDuelSheet();
+  document.getElementById("top-duel-overlay")?.classList.add("show");
+  scheduleScrollLockUpdate();
+}
+
+function closeTopDuelSheet() {
+  document.getElementById("top-duel-overlay")?.classList.remove("show");
+  topDuelSession = null;
+  scheduleScrollLockUpdate();
+}
+
+function chooseTopDuelWinner(winnerId) {
+  if (!topDuelSession) return;
+  const pair = topDuelCurrentPair();
+  if (!pair) return;
+  const [left, right] = pair;
+  const winner = Number(left.id) === Number(winnerId) ? left : right;
+  const loser = Number(left.id) === Number(winnerId) ? right : left;
+  const before = [...myRanked()];
+  const updated = [...before];
+  const winnerIndex = updated.findIndex(movie => Number(movie.id) === Number(winner.id));
+  const loserIndex = updated.findIndex(movie => Number(movie.id) === Number(loser.id));
+  if (winnerIndex < 0 || loserIndex < 0) return;
+
+  topDuelSession.history.push({ list: before, index: topDuelSession.index });
+  let moved = false;
+  if (winnerIndex > loserIndex) {
+    const [winnerMovie] = updated.splice(winnerIndex, 1);
+    const nextLoserIndex = updated.findIndex(movie => Number(movie.id) === Number(loser.id));
+    updated.splice(nextLoserIndex, 0, winnerMovie);
+    moved = true;
+    saveRankingToCloud(currentUser, updated).catch(() => showToast("Erreur d'enregistrement"));
+    renderRanked();
+  }
+
+  topDuelSession.index += 1;
+  document.getElementById("top-duel-feedback").innerHTML = moved
+    ? `<strong>${escapeHtml(winner.title)}</strong> passe au-dessus de <strong>${escapeHtml(loser.title)}</strong>.`
+    : `<strong>${escapeHtml(winner.title)}</strong> était déjà au-dessus. On garde cette place.`;
+  renderTopDuelSheet();
+}
+
+function undoTopDuelChoice() {
+  if (!topDuelSession || !topDuelSession.history.length) return;
+  const previous = topDuelSession.history.pop();
+  topDuelSession.index = previous.index;
+  saveRankingToCloud(currentUser, previous.list).catch(() => showToast("Erreur d'enregistrement"));
+  renderRanked();
+  document.getElementById("top-duel-feedback").textContent = "Dernier choix annulé. Tu peux reprendre le duel.";
+  renderTopDuelSheet();
 }
 
 function openRecommendSheet(movie) {
@@ -5031,6 +5207,12 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("tonight-pick-overlay").addEventListener("click", (e) => {
     if (e.target.id === "tonight-pick-overlay") closeTonightPickSheet();
   });
+  document.getElementById("top-duel-overlay").addEventListener("click", (e) => {
+    if (e.target.id === "top-duel-overlay") closeTopDuelSheet();
+  });
+  document.getElementById("btn-close-top-duel").addEventListener("click", closeTopDuelSheet);
+  document.getElementById("btn-finish-top-duel").addEventListener("click", closeTopDuelSheet);
+  document.getElementById("btn-undo-top-duel").addEventListener("click", undoTopDuelChoice);
   const btnTonightPickWatch = document.getElementById("btn-tonight-pick-watch");
   btnTonightPickWatch.insertAdjacentHTML("afterbegin", surfaceIconHtml("clapperboard", "tonight-pick-btn-icon"));
   btnTonightPickWatch.addEventListener("click", () => {
@@ -5827,6 +6009,27 @@ body.no-page-scroll #root {
 .rank-drag-handle .tab-svg { width: 21px; height: 21px; }
 .rank-card.pressed .rank-drag-handle { color: var(--lav-deep); }
 
+.top-duel-cta {
+  width: calc(100% - 40px); max-width: 880px; min-height: 74px; margin: 0 auto 18px; padding: 13px;
+  border: 0; border-radius: 18px; color: white; text-align: left; font-family: 'Plus Jakarta Sans', sans-serif;
+  display: grid; grid-template-columns: 42px minmax(0,1fr) auto; gap: 12px; align-items: center;
+  background: linear-gradient(135deg, rgba(45,42,61,.92), rgba(112,83,184,.72)), url('./badge-assets/space.jpg') center/cover;
+  box-shadow: 0 12px 28px rgba(45,42,61,.16), 5px 5px 14px var(--shadow-d), -5px -5px 14px var(--shadow-l);
+}
+.top-duel-cta:active { transform: scale(.98); }
+.top-duel-cta-icon {
+  width: 42px; height: 42px; display: grid; place-items: center; border-radius: 15px;
+  color: white; background: rgba(255,255,255,.16);
+}
+.top-duel-cta-icon .tab-svg { width: 22px; height: 22px; }
+.top-duel-cta-copy { min-width: 0; }
+.top-duel-cta-copy strong { display: block; font-size: 14px; font-weight: 800; line-height: 1.1; }
+.top-duel-cta-copy small { display: block; margin-top: 4px; color: rgba(255,255,255,.74); font-size: 10px; font-weight: 700; line-height: 1.35; }
+.top-duel-cta > b {
+  width: 34px; height: 34px; display: grid; place-items: center; border-radius: 12px;
+  color: var(--ink); background: rgba(255,255,255,.92); font-size: 19px;
+}
+
 .empty-state {
   text-align: center; padding: 50px 24px; font-size: 13px; color: var(--ink-faint); font-weight: 600;
   background: var(--card); border-radius: 20px;
@@ -6066,6 +6269,64 @@ body.no-page-scroll #root {
 .movie-action-copy small { display: block; margin-top: 2px; color: var(--ink-soft); font-size: 9.5px; font-weight: 700; }
 .context-divider { height: 1px; background: rgba(0,0,0,0.06); margin: 4px 8px; }
 .context-empty { padding: 12px; color: var(--ink-soft); font-size: 13px; font-weight: 700; text-align: center; }
+
+.top-duel-sheet { max-width: 560px; padding-left: 16px; padding-right: 16px; }
+.top-duel-heading { display: grid; grid-template-columns: minmax(0,1fr) 38px; gap: 12px; align-items: flex-start; padding: 0 4px 4px; }
+.top-duel-heading span {
+  display: block; color: var(--lav-deep); font: 800 9px 'DM Mono', monospace; text-transform: uppercase; letter-spacing: .7px;
+}
+.top-duel-heading h2 { margin: 4px 0 4px; font-size: 22px; font-weight: 800; line-height: 1.08; }
+.top-duel-heading p { margin: 0; color: var(--ink-soft); font-size: 11px; font-weight: 700; line-height: 1.45; }
+.top-duel-close {
+  width: 38px; height: 38px; border: 0; border-radius: 14px;
+  color: var(--ink); background: rgba(255,255,255,.72); font-size: 22px; line-height: 1;
+}
+.top-duel-progress {
+  height: 7px; margin: 12px 4px 14px; overflow: hidden; border-radius: 999px;
+  background: rgba(45,42,61,.1);
+}
+.top-duel-progress i {
+  display: block; width: 0%; height: 100%; border-radius: inherit;
+  background: linear-gradient(90deg, var(--mint), var(--gold), var(--pink)); transition: width .22s ease;
+}
+.top-duel-choices { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+.top-duel-choice {
+  min-width: 0; border: 0; border-radius: 20px; padding: 9px; text-align: left;
+  color: var(--ink); background: white; font-family: 'Plus Jakarta Sans', sans-serif;
+  box-shadow: 4px 4px 12px var(--shadow-d), -4px -4px 12px var(--shadow-l);
+}
+.top-duel-choice:active { transform: scale(.98); }
+.top-duel-choice img, .top-duel-poster-empty {
+  width: 100%; aspect-ratio: 2/3; border-radius: 15px; object-fit: cover; display: grid; place-items: center;
+}
+.top-duel-poster-empty {
+  padding: 8px; color: var(--ink-faint); background: var(--bg); font-size: 10px; font-weight: 800; text-align: center;
+}
+.top-duel-choice strong { display: block; min-height: 35px; margin-top: 9px; font-size: 13.5px; font-weight: 800; line-height: 1.18; }
+.top-duel-choice small { display: block; margin-top: 4px; color: var(--ink-soft); font-size: 9px; font-weight: 700; line-height: 1.35; }
+.top-duel-choice > span:last-child {
+  min-height: 34px; margin-top: 9px; border-radius: 13px; display: flex; align-items: center; justify-content: center; gap: 6px;
+  color: white; background: var(--lav-deep); font-size: 10px; font-weight: 800;
+}
+.top-duel-choice-icon { display: flex; }
+.top-duel-choice-icon .tab-svg { width: 14px; height: 14px; }
+.top-duel-feedback {
+  min-height: 44px; margin: 12px 4px 0; padding: 10px 12px; border-radius: 16px;
+  color: var(--ink-soft); background: var(--bg); font-size: 10.5px; font-weight: 700; line-height: 1.4;
+  box-shadow: inset 2px 2px 6px var(--shadow-d), inset -2px -2px 6px var(--shadow-l);
+}
+.top-duel-feedback strong { color: var(--ink); }
+.top-duel-done {
+  display: none; margin: 12px 4px 0; padding: 14px; border-radius: 18px; color: white;
+  background: linear-gradient(180deg, rgba(45,42,61,.08), rgba(45,42,61,.86)), url('./badge-assets/audience.jpg') center/cover;
+}
+.top-duel-done.show { display: block; }
+.top-duel-done strong { display: block; font-size: 16px; font-weight: 800; }
+.top-duel-done p { margin-top: 4px; color: rgba(255,255,255,.74); font-size: 10.5px; font-weight: 700; line-height: 1.4; }
+.top-duel-actions { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 8px; margin: 12px 4px 0; }
+.top-duel-actions .btn-primary, .top-duel-actions .btn-secondary { min-height: 48px; }
+.top-duel-actions .btn-secondary:disabled { opacity: .48; cursor: default; }
+
 .badge-unlock-overlay { background: rgba(45,42,61,.42); backdrop-filter: blur(8px); }
 .badge-unlock-sheet { padding-left: 22px; padding-right: 22px; text-align: center; overflow: visible; }
 .badge-unlock-kicker {
@@ -6420,6 +6681,31 @@ body:has(.app-tabbar-wrap) .toast { bottom: calc(env(safe-area-inset-bottom, 0px
     <div class="tonight-pick-actions">
       <button class="btn-primary" id="btn-tonight-pick-watch" type="button"><span>On regarde ça !</span></button>
       <button class="btn-secondary" id="btn-tonight-pick-reroll" type="button"><span>Un autre film</span></button>
+    </div>
+  </div>
+</div>
+
+<div class="context-overlay" id="top-duel-overlay" aria-hidden="true">
+  <div class="context-sheet top-duel-sheet" role="dialog" aria-modal="true" aria-labelledby="top-duel-title">
+    <button class="context-handle" type="button" aria-label="Fermer"></button>
+    <div class="top-duel-heading">
+      <div>
+        <span id="top-duel-step">Duel 1</span>
+        <h2 id="top-duel-title">Lequel passe au-dessus ?</h2>
+        <p id="top-duel-message">Choisis le film qui mérite d'être le plus haut dans ton Top.</p>
+      </div>
+      <button class="top-duel-close" id="btn-close-top-duel" type="button" aria-label="Fermer">×</button>
+    </div>
+    <div class="top-duel-progress"><i id="top-duel-progress-bar"></i></div>
+    <div class="top-duel-choices" id="top-duel-choices"></div>
+    <div class="top-duel-feedback" id="top-duel-feedback">On commence par comparer des films proches dans ton classement.</div>
+    <div class="top-duel-done" id="top-duel-done">
+      <strong>Session terminée</strong>
+      <p>Chaque choix a aidé Popcorn à affiner ton classement.</p>
+    </div>
+    <div class="top-duel-actions">
+      <button class="btn-secondary" id="btn-undo-top-duel" type="button">Annuler le dernier choix</button>
+      <button class="btn-primary" id="btn-finish-top-duel" type="button">Terminer</button>
     </div>
   </div>
 </div>
