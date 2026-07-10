@@ -602,7 +602,7 @@ let PROFILES = []; // chargé dynamiquement depuis Firestore
 let PROFILE_INDEX = [];
 let DATA_PROFILES = [];
 const PROFILE_DOC_SOURCES = { rankings: [], watched: [], watchlist: [] };
-let recoPrefs = { ignoredIds: [], dislikedGenreWeights: {}, updatedAt: 0 };
+let recoPrefs = { ignoredIds: [], dislikedGenreWeights: {}, likedGenreWeights: {}, updatedAt: 0 };
 let recoPrefsUser = null;
 let recoPrefsUnsub = null;
 let creatingProfile = false; // état "créer un nouveau profil" sur l'écran de sélection
@@ -2317,9 +2317,15 @@ function normalizeRecoPrefs(data = {}) {
     const weight = Number(value);
     if (Number.isFinite(weight) && weight > 0) dislikedGenreWeights[gid] = Math.min(weight, 12);
   });
+  const likedGenreWeights = {};
+  Object.entries(data.likedGenreWeights || {}).forEach(([gid, value]) => {
+    const weight = Number(value);
+    if (Number.isFinite(weight) && weight > 0) likedGenreWeights[gid] = Math.min(weight, 12);
+  });
   return {
     ignoredIds,
     dislikedGenreWeights,
+    likedGenreWeights,
     updatedAt: Number(data.updatedAt) || 0
   };
 }
@@ -3887,7 +3893,7 @@ function openRatingSheet(movie, origin = null, recoDocId = null) {
       addToWatched(pendingRatingMovie, parseInt(btn.dataset.rating));
       if (pendingRatingOrigin === "watchlist") removeFromWatchlist(pendingRatingMovie.id);
       if (pendingRatingOrigin === "reco" && pendingRatingRecoDoc) completeReco(pendingRatingRecoDoc);
-      if (pendingRatingOrigin === "recommendation") removeRecommendedCardForMovie(pendingRatingMovie.id);
+      if (pendingRatingOrigin === "recommendation") { removeRecommendedCardForMovie(pendingRatingMovie.id); boostLikedGenresFromRecommendation(pendingRatingMovie); }
       closeRatingSheet();
     });
   });
@@ -4188,7 +4194,7 @@ function handleMovieAction(action) {
   if (action === "top") {
     const fromRecommendation = pendingActionOrigin === "recommendation";
     addToRanked(movie);
-    if (fromRecommendation) removeRecommendedCardForMovie(movie.id);
+    if (fromRecommendation) { removeRecommendedCardForMovie(movie.id); boostLikedGenresFromRecommendation(movie); }
     closeMovieActionSheet();
   } else if (action === "watched") {
     const origin = ["watchlist", "recommendation"].includes(pendingActionOrigin) ? pendingActionOrigin : null;
@@ -4197,7 +4203,7 @@ function handleMovieAction(action) {
   } else if (action === "watchlist") {
     const fromRecommendation = pendingActionOrigin === "recommendation";
     addToWatchlist(movie);
-    if (fromRecommendation) removeRecommendedCardForMovie(movie.id);
+    if (fromRecommendation) { removeRecommendedCardForMovie(movie.id); boostLikedGenresFromRecommendation(movie); }
     closeMovieActionSheet();
   } else if (action === "recommend") {
     closeMovieActionSheet();
@@ -5805,6 +5811,7 @@ function scoreCandidate(candidate, genreWeights, prefs = recoPrefs) {
   const likedWeight = matchedGenres.reduce((sum, gid) => sum + (genreWeights[gid] || 0), 0);
   const coverage = matchedGenres.length / Math.max(genres.length, 1);
   const dislikedPenalty = genres.reduce((sum, gid) => sum + (Number(prefs.dislikedGenreWeights?.[gid]) || 0), 0);
+  const explicitLikeBonus = matchedGenres.reduce((sum, gid) => sum + (Number(prefs.likedGenreWeights?.[gid]) || 0), 0);
   const voteAverage = Number(candidate.vote_average) || 0;
   const voteCount = Number(candidate.vote_count) || 0;
   const voteConfidence = Math.min(5, Math.log10(voteCount + 10));
@@ -5821,6 +5828,7 @@ function scoreCandidate(candidate, genreWeights, prefs = recoPrefs) {
   score += sourceBoost * 1.6;
   score += crossBoost * 2.3;
   score += challengeBoost;
+  score += explicitLikeBonus * 1.8;
   score -= dislikedPenalty * 7;
   score -= mainstreamPenalty;
   if (!hasSpecificGenreMatch && sourceBoost < 3 && !challengeBoost) score -= 14;
@@ -5913,13 +5921,14 @@ function removeRecommendedCardForMovie(movieId) {
   if (card) removeRecommendedCard(card);
 }
 
-async function persistIgnoredMovie(movie, dislikedGenreWeights, toastText) {
+async function persistRecoFeedback(movie, { dislikedGenreWeights, likedGenreWeights, markIgnored }, toastText) {
   const userId = currentUser;
   const ignoredIds = new Set(recoPrefs.ignoredIds || []);
-  ignoredIds.add(Number(movie.id));
+  if (markIgnored) ignoredIds.add(Number(movie.id));
   const nextPrefs = normalizeRecoPrefs({
     ignoredIds: [...ignoredIds],
-    dislikedGenreWeights,
+    dislikedGenreWeights: dislikedGenreWeights || recoPrefs.dislikedGenreWeights,
+    likedGenreWeights: likedGenreWeights || recoPrefs.likedGenreWeights,
     updatedAt: Date.now()
   });
   recoPrefs = nextPrefs;
@@ -5931,7 +5940,7 @@ async function persistIgnoredMovie(movie, dislikedGenreWeights, toastText) {
       : doc(db, "recoPrefs", userId);
     await setDoc(prefsRef, nextPrefs, { merge: true });
   } catch (e) {
-    showToast("Refus gardé sur cet appareil");
+    showToast("Préférence gardée sur cet appareil");
   }
 }
 
@@ -5939,10 +5948,19 @@ async function ignoreRecommendedMovie(movie, card = null) {
   if (!currentUser || !movie?.id) return;
   const dislikedGenreWeights = { ...(recoPrefs.dislikedGenreWeights || {}) };
   (movie.genre_ids || []).forEach(gid => {
-    dislikedGenreWeights[gid] = Math.min(8, (Number(dislikedGenreWeights[gid]) || 0) + 0.45);
+    dislikedGenreWeights[gid] = Math.min(10, (Number(dislikedGenreWeights[gid]) || 0) + 0.9);
   });
   removeRecommendedCard(card);
-  await persistIgnoredMovie(movie, dislikedGenreWeights, "Je l'enlève des recos");
+  await persistRecoFeedback(movie, { dislikedGenreWeights, markIgnored: true }, "Je l'enlève des recos, moins de films comme ça");
+}
+
+async function boostLikedGenresFromRecommendation(movie) {
+  if (!currentUser || !movie?.id) return;
+  const likedGenreWeights = { ...(recoPrefs.likedGenreWeights || {}) };
+  (movie.genre_ids || []).forEach(gid => {
+    likedGenreWeights[gid] = Math.min(10, (Number(likedGenreWeights[gid]) || 0) + 1.1);
+  });
+  await persistRecoFeedback(movie, { likedGenreWeights, markIgnored: false }, "On te proposera plus de films comme ça");
 }
 
 function challengeRecommendationJobs(challenge, options = {}) {
