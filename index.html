@@ -3383,7 +3383,7 @@ function renderFriendsTabContent(viewed) {
         const badgeCount = unlockedBadgeCountForProfile(p.id);
         return `
         <button class="friend-chip ${p.id === viewed.id ? "active" : ""}" data-id="${escapeAttr(p.id)}" type="button" role="tab" aria-selected="${p.id === viewed.id}">
-          <span class="friend-chip-avatar">${profileAvatarHtml(p.id, 52)}${badgeCount ? `<i class="friend-chip-badges" aria-label="${badgeCount} badges gagnés">${badgeCount}</i>` : ""}</span>
+          <span class="friend-chip-avatar">${profileAvatarHtml(p.id, 52)}${badgeCount ? `<i class="friend-chip-badges" aria-label="${badgeCount} médailles gagnées">${tabIconHtml("medal")}${badgeCount}</i>` : ""}</span>
           <small>${escapeHtml(p.name)}</small>
         </button>`;
       }).join("")}
@@ -3396,8 +3396,11 @@ function renderFriendsTabContent(viewed) {
       ${profileAvatarHtml(viewed.id, 54)}
       <span class="friend-hero-copy">
         <strong>${escapeHtml(viewed.name)}</strong>
-        <small>${viewedTop.length} top · ${viewedWatched.length} vu${viewedWatched.length > 1 ? "s" : ""} · ${average} de moyenne · ${viewedBadges} badge${viewedBadges > 1 ? "s" : ""}</small>
-        ${(viewed.showcaseBadges || []).length ? `<span class="friend-showcase-row">${viewed.showcaseBadges.map(b => `<span class="friend-showcase-badge">${challengeBadgeArtHtml(b)}</span>`).join("")}</span>` : ""}
+        <small>${viewedTop.length} top · ${viewedWatched.length} vu${viewedWatched.length > 1 ? "s" : ""} · ${average} de moyenne</small>
+        <span class="friend-hero-badgerow">
+          <span class="friend-hero-medals" aria-label="${viewedBadges} médailles gagnées">${tabIconHtml("medal")}<b>${viewedBadges}</b> médaille${viewedBadges > 1 ? "s" : ""}</span>
+          ${(viewed.showcaseBadges || []).length ? `<span class="friend-showcase-row">${viewed.showcaseBadges.map(b => `<span class="friend-showcase-badge">${challengeBadgeArtHtml(b)}</span>`).join("")}</span>` : ""}
+        </span>
       </span>
       <b class="friend-hero-arrow">›</b>
     </button>
@@ -6551,13 +6554,14 @@ body.no-page-scroll #root {
   transition: box-shadow 0.16s, transform 0.16s cubic-bezier(.2,.8,.2,1);
 }
 .friend-chip-badges {
-  position: absolute; right: -3px; bottom: -3px; z-index: 2;
-  min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px;
-  display: grid; place-items: center; font-style: normal;
-  font-family: 'DM Mono', monospace; font-size: 10px; font-weight: 700;
+  position: absolute; right: -6px; bottom: -4px; z-index: 2;
+  height: 21px; padding: 0 7px 0 4px; border-radius: 11px;
+  display: inline-flex; align-items: center; gap: 1px; font-style: normal;
+  font-family: 'DM Mono', monospace; font-size: 11px; font-weight: 700;
   color: var(--gold-deep); background: var(--gold);
   box-shadow: 0 2px 5px rgba(45,42,61,.25), 0 0 0 2px var(--bg);
 }
+.friend-chip-badges .tab-svg { width: 13px; height: 13px; }
 .friend-chip:active .friend-chip-avatar { transform: scale(0.94); }
 .friend-chip.active .friend-chip-avatar { box-shadow: 0 0 0 3px var(--lav), 4px 4px 10px var(--shadow-d); }
 .friend-chip .avatar-poster, .friend-chip .avatar-initial-sm { border-radius: 50%; }
@@ -6580,6 +6584,15 @@ body.no-page-scroll #root {
 .friend-hero-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
 .friend-hero-copy strong { font-size: 15px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .friend-hero-copy small { font-size: 11px; color: var(--ink-soft); font-weight: 700; }
+.friend-hero-medals {
+  display: inline-flex; align-items: center; gap: 4px; align-self: flex-start;
+  margin-top: 2px; padding: 3px 9px 3px 6px; border-radius: 999px;
+  background: var(--gold); color: var(--gold-deep);
+  font-size: 11px; font-weight: 800;
+}
+.friend-hero-medals .tab-svg { width: 14px; height: 14px; }
+.friend-hero-medals b { font-weight: 800; }
+.friend-hero-badgerow { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
 .friend-hero-arrow { flex-shrink: 0; font-size: 22px; font-weight: 600; color: var(--ink-faint); }
 .friend-showcase-row { display: flex; gap: 4px; margin-top: 2px; }
 .friend-showcase-badge { display: inline-block; width: 20px; height: 20px; flex-shrink: 0; }
