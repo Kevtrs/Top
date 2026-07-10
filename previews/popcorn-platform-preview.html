@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Popcorn - iOS et Android</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@500;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #e9e5f1; color: #302b40; font-family: 'Plus Jakarta Sans', sans-serif; }
+    .board { width: 100%; max-width: 1380px; min-height: 980px; margin: auto; padding: 40px 54px; background: #f6f4fc; }
+    .hero { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 24px; }
+    .eyebrow { color: #7554bd; font: 700 11px 'DM Mono'; }
+    h1 { margin: 7px 0 7px; font-size: 38px; letter-spacing: 0; }
+    .hero p { max-width: 720px; margin: 0; color: #938aa7; font-size: 13px; line-height: 1.55; }
+    .brand-chip { display: flex; align-items: center; gap: 10px; padding: 11px 15px; border-radius: 17px; background: white; box-shadow: 6px 7px 18px #ded9ea; font-weight: 800; }
+    .brand-chip img { width: 38px; height: 38px; border-radius: 12px; }
+    .devices { display: grid; grid-template-columns: 1fr 1fr; gap: 42px; max-width: 980px; margin: 0 auto; }
+    .device-wrap h2 { margin: 0 0 4px; font-size: 15px; }
+    .device-wrap > p { height: 34px; margin: 0 0 10px; color: #9188a5; font-size: 10px; line-height: 1.45; }
+    .phone { width: 430px; height: 760px; margin: auto; position: relative; overflow: hidden; background: #f6f4fc; box-shadow: 12px 20px 42px rgba(49,40,68,.2); }
+    .iphone { border: 9px solid #292532; border-radius: 50px; }
+    .pixel { border: 8px solid #2d2a34; border-radius: 38px; }
+    .island { position: absolute; z-index: 12; top: 11px; left: 50%; width: 116px; height: 29px; transform: translateX(-50%); border-radius: 20px; background: #292532; }
+    .camera { position: absolute; z-index: 12; top: 13px; left: 50%; width: 16px; height: 16px; transform: translateX(-50%); border: 4px solid #25222d; border-radius: 50%; background: #13111a; }
+    .status { height: 36px; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; font: 700 9px 'DM Mono'; }
+    .pixel .status { height: 38px; padding: 0 19px; }
+    .screen { height: 100%; padding: 6px 18px 98px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; }
+    .brand { display: flex; align-items: center; gap: 9px; font-size: 22px; font-weight: 800; }
+    .brand img { width: 39px; height: 39px; border-radius: 12px; box-shadow: 4px 5px 12px #ddd7e8; }
+    .settings { width: 42px; height: 42px; border: 0; display: grid; place-items: center; color: #6e4bb3; background: white; box-shadow: 4px 5px 12px #ddd7e8; }
+    .iphone .settings { border-radius: 50%; }
+    .pixel .settings { border-radius: 14px; }
+    svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .search { height: 50px; margin-top: 18px; padding: 0 15px; border-radius: 18px; display: flex; align-items: center; gap: 9px; color: #a59cb8; background: #f0edf7; box-shadow: inset 4px 4px 8px #ded9eb, inset -4px -4px 8px white; font-size: 12px; }
+    .heading { display: flex; align-items: flex-end; justify-content: space-between; margin: 19px 2px 9px; }
+    .heading b { display: block; font-size: 13px; }
+    .heading small { color: #968da9; font-size: 8px; }
+    .heading span { color: #7653bb; font-size: 9px; font-weight: 800; }
+    .challenge { display: grid; grid-template-columns: 76px 1fr; gap: 12px; padding: 13px; border-radius: 19px; background: white; box-shadow: 5px 6px 14px #dfdaea; }
+    .art { width: 76px; height: 76px; overflow: hidden; clip-path: polygon(16% 5%,84% 5%,98% 24%,91% 79%,50% 98%,9% 79%,2% 24%); }
+    .art img { width: 100%; height: 100%; object-fit: cover; }
+    .copy em { color: #7755bc; font: 700 7px 'DM Mono'; font-style: normal; }
+    .copy strong { display: block; margin: 3px 0; font-size: 13px; }
+    .copy p { margin: 0; color: #948ba6; font-size: 8px; }
+    .bar { height: 5px; margin-top: 8px; overflow: hidden; border-radius: 8px; background: #eeeaf6; }
+    .bar i { display: block; width: 70%; height: 100%; background: #a685e4; }
+    .count { margin-top: 5px; color: #817793; font: 700 7px 'DM Mono'; }
+    .challenge button { grid-column: 1/-1; min-height: 39px; border: 0; border-radius: 12px; background: #b49bef; color: white; font-size: 9px; font-weight: 800; }
+    .accordion { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 12px; border-radius: 16px; background: white; box-shadow: 4px 5px 12px #dfdaea; }
+    .aicon { width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; color: #7552b8; background: #f1edf9; }
+    .accordion div:nth-child(2) { flex: 1; }
+    .accordion b { display: block; font-size: 10px; }
+    .accordion small { color: #988fab; font-size: 7.5px; }
+    .tabs { position: absolute; z-index: 8; left: 11px; right: 11px; bottom: 9px; display: flex; align-items: center; padding: 5px; background: rgba(255,255,255,.97); color: #c1c6cc; }
+    .iphone .tabs { height: 80px; padding-bottom: 12px; border-radius: 25px 25px 35px 35px; box-shadow: 8px 8px 22px #ddd8e9; }
+    .iphone .tabs:after { content: ""; position: absolute; left: 50%; bottom: 5px; width: 115px; height: 4px; transform: translateX(-50%); border-radius: 5px; background: #e2ddec; }
+    .pixel .tabs { left: 8px; right: 8px; bottom: 8px; height: 72px; border-radius: 22px; box-shadow: 0 8px 24px rgba(71,59,96,.18); }
+    .tab { flex: .78 1 0; min-width: 0; height: 56px; display: flex; align-items: center; justify-content: center; position: relative; }
+    .tab.active { flex-grow: 1.72; gap: 3px; color: #7653bb; }
+    .tab.active:before { content: ""; position: absolute; inset: 9px 4px; max-width: 112px; margin: auto; border-radius: 16px; background: #eee7fc; }
+    .pixel .tab.active:before { border-radius: 22px; }
+    .tab svg { position: relative; z-index: 1; width: 23px; }
+    .tab span { position: relative; z-index: 1; font-size: 10px; font-weight: 800; }
+    .tab:not(.active) span { display: none; }
+    .notes { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-top: 22px; }
+    .note { padding: 13px; border-radius: 14px; background: white; border: 1px solid #eee9f6; }
+    .note b { display: block; color: #7553ba; font-size: 9px; }
+    .note p { margin: 5px 0 0; color: #9188a5; font-size: 8px; line-height: 1.45; }
+  </style>
+</head>
+<body>
+<main class="board">
+  <header class="hero"><div><div class="eyebrow">POPCORN / ADAPTIVE PWA</div><h1>La même app, deux bonnes ergonomies.</h1><p>Popcorn conserve sa personnalité Pastel Arcade. Seuls les éléments liés au système changent pour que l'application paraisse naturelle sur chaque téléphone.</p></div><div class="brand-chip"><img src="../letop-icon-192.png" alt="">Popcorn</div></header>
+  <section class="devices">
+    <article class="device-wrap"><h2>iPhone 15 Pro</h2><p>Dock flottant, indicateur d'accueil et réglage circulaire : la version la plus douce et proche d'iOS.</p><div class="phone iphone"><div class="island"></div><div class="status"><span>9:41</span><span>5G 100%</span></div><div class="screen">__CONTENT__</div>__TABS__</div></article>
+    <article class="device-wrap"><h2>Google Pixel 9</h2><p>Barre Material plus compacte, aucun faux indicateur iPhone, cibles tactiles et bouton Retour natif.</p><div class="phone pixel"><div class="camera"></div><div class="status"><span>9:41</span><span>5G 100%</span></div><div class="screen">__CONTENT__</div>__TABS__</div></article>
+  </section>
+  <section class="notes"><div class="note"><b>INSTALLATION</b><p>Android affiche directement la fenêtre Installer l'app depuis Chrome.</p></div><div class="note"><b>INTERACTIONS</b><p>Retour ferme les sheets et un léger retour haptique confirme les actions.</p></div><div class="note"><b>GRANDS ÉCRANS</b><p>La grille s'élargit progressivement sur tablette et ordinateur sans étirer les cartes.</p></div></section>
+</main>
+<template id="content"><div class="topbar"><div class="brand"><img src="../letop-icon-192.png" alt="">Popcorn</div><button class="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3A1.7 1.7 0 0 0 14 21v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3L7 19.8 4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14h-.2v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg></button></div><div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>Cherche un film...</div><div class="heading"><div><b>Défis cinéma</b><small>Choisis ce que tu veux débloquer</small></div><span>Collection</span></div><div class="challenge"><div class="art"><img src="../badge-assets/director-tarantino.jpg" alt=""></div><div class="copy"><em>OBJECTIF DU MOMENT</em><strong>100% Tarantino</strong><p>Encore 3 films pour le débloquer.</p><div class="bar"><i></i></div><div class="count">7 / 10 · FILMS PRINCIPAUX</div></div><button>Voir les films</button></div><div class="accordion"><div class="aicon"><svg viewBox="0 0 24 24"><path d="M18 11V8a2 2 0 0 0-2-2h-1V4a2 2 0 0 0-4 0v2H9V5a2 2 0 0 0-4 0v8l-1-1a2 2 0 0 0-3 3l5 5h8a6 6 0 0 0 6-6v-3Z"/></svg></div><div><b>Recommandations pour toi</b><small>Basées sur ton Top</small></div></div><div class="accordion"><div class="aicon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l4 2"/></svg></div><div><b>Vu récemment</b><small>Films vus ou classés par le groupe</small></div></div></template>
+<template id="tabs"><nav class="tabs"><div class="tab active"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><span>Recherche</span></div><div class="tab"><svg viewBox="0 0 24 24"><path d="m3 7 5 4 4-7 4 7 5-4-3 11H6Z"/></svg></div><div class="tab"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 6v12M17 6v12"/></svg></div><div class="tab"><svg viewBox="0 0 24 24"><path d="M6 9h12l-1 12H7Z"/><path d="M8 9c-2-4 1-6 3-3 0-4 4-4 4 0 3-2 5 1 2 3"/></svg></div><div class="tab"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="5"/><path d="m8 13-1 8 5-3 5 3-1-8"/></svg></div><div class="tab"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="5"/><path d="M1 21a8 8 0 0 1 16 0M17 4a5 5 0 0 1 0 8"/></svg></div></nav></template>
+<script>const c=document.getElementById('content').innerHTML,t=document.getElementById('tabs').innerHTML;document.body.innerHTML=document.body.innerHTML.replaceAll('__CONTENT__',c).replaceAll('__TABS__',t)</script>
+</body></html>

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verification badges saga</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; padding: 22px; background: #F6F4FC; color: #2D2A3D; font-family: Arial, sans-serif; }
+.sheet { padding: 18px; border-radius: 24px; background: rgba(255,255,255,.82); box-shadow: 7px 7px 20px #DCD8EA; }
+h1 { margin: 0; font-size: 21px; }
+.intro { margin: 4px 0 18px; color: #9A93B8; font-size: 12px; }
+.group { display: flex; flex-direction: column; gap: 10px; }
+.group-heading { margin-top: 8px; }
+.group-heading:first-child { margin-top: 0; }
+.group-heading strong, .group-heading span { display: block; }
+.group-heading strong { font-size: 13px; }
+.group-heading span { margin-top: 2px; color: #9A93B8; font-size: 10px; }
+.tile { display: grid; grid-template-columns: 68px minmax(0,1fr); gap: 12px; align-items: center; padding: 11px; border-radius: 18px; background: #fff; box-shadow: 4px 4px 10px #DED9EB; }
+.art { width: 68px; height: 68px; position: relative; overflow: hidden; background-image: linear-gradient(155deg, rgba(30,25,48,.05), rgba(30,25,48,.7)), var(--image); background-size: cover; background-position: center; clip-path: polygon(16% 5%,84% 5%,98% 24%,91% 79%,50% 98%,9% 79%,2% 24%); }
+.art.legendary { clip-path: polygon(50% 0,84% 10%,100% 38%,93% 77%,68% 100%,32% 100%,7% 77%,0 38%,16% 10%); }
+.seal { position: absolute; width: 27px; height: 27px; right: 6px; bottom: 6px; display: grid; place-items: center; border: 1px solid #fff; border-radius: 50%; color: #fff; background: rgba(48,40,73,.82); }
+.seal svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.copy { min-width: 0; }
+.copy strong { display: block; font-size: 13px; line-height: 1.2; }
+.copy p { margin: 3px 0; color: #9A93B8; font-size: 10.5px; line-height: 1.3; }
+.bar { height: 5px; margin-top: 7px; overflow: hidden; border-radius: 99px; background: #EEEAF7; }
+.bar i { display: block; height: 100%; background: linear-gradient(90deg, #AD91E8, #EF9EBD); }
+small { color: #8E6BD6; font-size: 9.5px; font-weight: 700; }
+.bar-wrap { position: fixed; left: 0; right: 0; bottom: 0; padding: 0 10px 8px; }
+.test-tabbar { width: min(54em, 100%); height: 8.6em; margin: 0 auto; padding: 0 1.7em 2.2em; display: flex; align-items: center; border-radius: 2.2em 2.2em 4.2em 4.2em; background: rgba(255,255,255,.96); box-shadow: 8px 8px 22px #DCD8EA; font-size: clamp(8px, 2.25vw, 10px); }
+.test-tabbar button { all: unset; flex: 1; min-width: 0; height: 5.4em; display: flex; align-items: center; justify-content: center; position: relative; color: #CDD2D7; overflow: hidden; }
+.test-tabbar button.active { flex: 0 0 16.2em; min-width: 16.2em; color: #D17FAC; }
+.test-tabbar svg { width: 2.55em; height: 2.55em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.test-tabbar button.active svg { position: absolute; left: 1.45em; }
+.test-tabbar b { position: absolute; left: 4.85em; font-size: 1.22em; white-space: nowrap; }
+</style>
+</head>
+<body>
+<main class="sheet">
+  <h1>Tes badges cinema</h1>
+  <p class="intro">Chaque saga demande tous ses films.</p>
+  <section class="group">
+    <div class="group-heading"><strong>Grandes sagas</strong><span>Tous les films sont necessaires</span></div>
+    <article class="tile"><div class="art" style="--image:url('https://image.tmdb.org/t/p/w500/oiwc338EoBgS4sEI2ixAny4KQKg.jpg')"><span class="seal"><svg viewBox="0 0 48 48"><ellipse cx="24" cy="24" rx="15" ry="9"/><ellipse cx="24" cy="24" rx="9" ry="4"/></svg></span></div><div class="copy"><strong>L'Anneau unique</strong><p>Traverse la Terre du Milieu jusqu'au Mordor.</p><div class="bar"><i style="width:67%"></i></div><small>2 / 3</small></div></article>
+    <article class="tile"><div class="art" style="--image:url('https://image.tmdb.org/t/p/w500/1XAC6RPT01UX9EQGy2JVn5c8pgy.jpg')"><span class="seal"><svg viewBox="0 0 48 48"><path d="m11 37 24-24"/><path d="m31 9 2 5 5 2-5 2-2 5-2-5-5-2 5-2Z"/></svg></span></div><div class="copy"><strong>Maitre des Reliques</strong><p>Vis chaque annee de Harry a Poudlard.</p><div class="bar"><i style="width:50%"></i></div><small>4 / 8</small></div></article>
+    <div class="group-heading"><strong>Collections legendaires</strong><span>Les marathons les plus exigeants</span></div>
+    <article class="tile"><div class="art legendary" style="--image:url('https://image.tmdb.org/t/p/w500/srgq7bzZsuDw7NoGXdazRXp7Hl6.jpg')"><span class="seal"><svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="18"/><circle cx="24" cy="24" r="8"/><path d="M24 6v10M24 32v10M6 24h10M32 24h10"/></svg></span></div><div class="copy"><strong>Au service secret</strong><p>Mene a terme les 25 missions officielles de James Bond.</p><div class="bar"><i style="width:20%"></i></div><small>5 / 25</small></div></article>
+    <article class="tile"><div class="art legendary" style="--image:url('https://image.tmdb.org/t/p/w500/ok4ot3YbfDYZcINXf91JUfq3maB.jpg')"><span class="seal"><svg viewBox="0 0 48 48"><path d="M38 25c0 9-7 16-16 16S7 34 7 25 14 9 24 9c8 0 14 6 14 13 0 8-6 13-13 13-6 0-11-5-11-10 0-6 4-10 10-10 5 0 8 4 8 8"/></svg></span></div><div class="copy"><strong>Je veux jouer a un jeu</strong><p>Survis aux dix pieges de la saga Saw.</p><div class="bar"><i style="width:90%"></i></div><small>9 / 10</small></div></article>
+  </section>
+</main>
+<nav class="bar-wrap"><div class="test-tabbar">
+  <button><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></button>
+  <button><svg viewBox="0 0 24 24"><path d="m2 6 5 4 5-7 5 7 5-4-3 11H5Z"/></svg></button>
+  <button><svg viewBox="0 0 24 24"><path d="M2 9a3 3 0 0 1 0 6v4h20v-4a3 3 0 0 1 0-6V5H2Z"/></svg></button>
+  <button><svg viewBox="0 0 24 24"><path d="M4 8h16l-2 14H6Z"/><path d="M7 8a2 2 0 1 1 3-3 2 2 0 1 1 4 0 2 2 0 1 1 3 3"/></svg></button>
+  <button class="active"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="6"/><path d="m8.5 13-1.5 8.4 5-3.2 5 3.2-1.5-8.4"/><path d="m12 5 .9 1.8 2 .3-1.5 1.4.4 2-1.8-1-1.8 1 .4-2-1.5-1.4 2-.3Z"/></svg><b>Badges</b></button>
+  <button><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="5"/><path d="M17 4a5 5 0 0 1 0 8M1 21a8 8 0 0 1 16 0M17 14c3 1 5 4 5 7"/></svg></button>
+</div></nav>
+</body>
+</html>

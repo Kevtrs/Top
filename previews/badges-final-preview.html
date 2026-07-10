@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Le Top - Galerie finale des badges</title>
+  <style>
+    :root {
+      --bg:#F6F4FC;
+      --card:#FFFFFF;
+      --ink:#2D2A3D;
+      --soft:#9189AF;
+      --line:#E8E3F2;
+      --lav:#A88BE8;
+      --pink:#ED8FB0;
+      --gold:#E7B952;
+      --mint:#55B8A8;
+      --blue:#718DD4;
+      --shadow:5px 7px 18px rgba(89,73,132,.13),-4px -4px 13px rgba(255,255,255,.94);
+    }
+    * { box-sizing:border-box; }
+    body {
+      margin:0;
+      padding:34px;
+      background:#E9E6F1;
+      color:var(--ink);
+      font-family:"Plus Jakarta Sans",Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    }
+    .board {
+      width:880px;
+      margin:0 auto;
+    }
+    .board-head {
+      display:flex;
+      align-items:flex-end;
+      justify-content:space-between;
+      padding:0 6px 20px;
+    }
+    .board-head h1 { margin:0; font-size:34px; letter-spacing:0; }
+    .board-head p { margin:6px 0 0; color:var(--soft); font-size:14px; font-weight:700; }
+    .total {
+      padding:9px 14px;
+      border-radius:999px;
+      background:#fff;
+      color:#66558F;
+      box-shadow:var(--shadow);
+      font-size:13px;
+      font-weight:900;
+    }
+    .phones { display:grid; grid-template-columns:1fr 1fr; gap:24px; align-items:start; }
+    .phone {
+      min-height:1260px;
+      padding:18px 16px 24px;
+      border-radius:38px;
+      background:var(--bg);
+      box-shadow:0 22px 55px rgba(52,43,76,.19);
+      overflow:hidden;
+    }
+    .phone-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:18px; }
+    .phone-head h2 { margin:0; font-size:24px; letter-spacing:0; }
+    .phone-head span {
+      width:34px; height:34px; display:grid; place-items:center; border-radius:50%;
+      background:#fff; color:#6F579E; box-shadow:var(--shadow); font-size:18px; font-weight:800;
+    }
+    .section-title {
+      display:flex; align-items:center; gap:9px; margin:18px 4px 10px;
+      color:#776C98; font-size:10px; font-weight:1000; letter-spacing:.09em; text-transform:uppercase;
+    }
+    .section-title::after { content:""; height:1px; flex:1; background:var(--line); }
+    .list { display:flex; flex-direction:column; gap:10px; }
+    .badge {
+      min-height:94px;
+      display:grid;
+      grid-template-columns:72px minmax(0,1fr);
+      align-items:center;
+      gap:12px;
+      padding:11px;
+      position:relative;
+      border-radius:19px;
+      background:var(--card);
+      box-shadow:var(--shadow);
+      overflow:hidden;
+    }
+    .badge.active { box-shadow:inset 0 0 0 2px var(--accent),var(--shadow); }
+    .badge.unlocked::after {
+      content:"";
+      position:absolute;
+      width:62px; height:62px; right:-28px; top:-28px;
+      border-radius:50%; background:color-mix(in srgb,var(--accent) 16%,white);
+    }
+    .visual {
+      width:66px; height:66px; position:relative; display:grid; place-items:center;
+      overflow:hidden; isolation:isolate; background:var(--accent);
+    }
+    .visual::after { content:""; position:absolute; inset:0; z-index:1; background:rgba(35,27,50,.34); }
+    .visual img.photo { width:100%; height:100%; object-fit:cover; display:block; }
+    .visual img.icon {
+      position:absolute; z-index:2; width:27px; height:27px;
+      filter:brightness(0) invert(1) drop-shadow(0 2px 4px rgba(0,0,0,.35));
+    }
+    .visual.genre {
+      clip-path:polygon(50% 0,92% 16%,92% 61%,77% 82%,50% 100%,23% 82%,8% 61%,8% 16%);
+    }
+    .visual.explore {
+      border-radius:50%; border:5px dotted var(--accent); background:#fff;
+    }
+    .visual.director {
+      width:62px; height:70px; margin-left:2px;
+      clip-path:polygon(12% 0,88% 0,100% 14%,94% 25%,100% 36%,94% 50%,100% 64%,94% 76%,100% 88%,88% 100%,12% 100%,0 88%,6% 76%,0 64%,6% 50%,0 36%,6% 25%,0 14%);
+      box-shadow:inset 0 0 0 5px var(--accent);
+    }
+    .visual.director::after { background:rgba(35,27,50,.08); }
+    .visual.family {
+      clip-path:polygon(50% 0,88% 12%,100% 50%,88% 88%,50% 100%,12% 88%,0 50%,12% 12%);
+      border-radius:24%;
+    }
+    .visual.personal { border-radius:50%; border:6px double var(--accent); background:#fff; }
+    .visual.personal::before {
+      content:""; position:absolute; inset:5px; border-radius:50%; border:2px solid rgba(255,255,255,.78); z-index:2;
+    }
+    .copy { min-width:0; }
+    .copy strong { display:block; padding-right:10px; font-size:15px; line-height:1.12; letter-spacing:0; }
+    .copy span { display:block; margin-top:4px; color:var(--soft); font-size:10.5px; line-height:1.25; font-weight:750; }
+    .progress { height:6px; margin-top:8px; border-radius:99px; background:#ECE8F3; overflow:hidden; }
+    .progress i { display:block; width:var(--progress); height:100%; border-radius:inherit; background:var(--accent); }
+    .count { margin-top:5px; color:color-mix(in srgb,var(--accent) 68%,#322848); font-size:10px; font-weight:950; }
+    .genre .photo { object-position:50% 50%; }
+    .director-tarantino .photo { object-position:50% 17%; }
+    .director-miyazaki .photo { object-position:50% 12%; }
+    .director-nolan .photo { object-position:50% 10%; }
+    .director-scorsese .photo { object-position:45% 15%; }
+    .footnote { margin:18px 6px 0; color:#A8A0BF; font-size:9px; line-height:1.4; font-weight:700; text-align:center; }
+  </style>
+</head>
+<body>
+  <main class="board">
+    <header class="board-head">
+      <div><h1>Les badges du Top</h1><p>Galerie complète · progression calculée automatiquement</p></div>
+      <div class="total">20 badges</div>
+    </header>
+    <div class="phones">
+      <section class="phone">
+        <div class="phone-head"><h2>Défis cinéma</h2><span>×</span></div>
+
+        <div class="section-title">Genres et univers</div>
+        <div class="list">
+          <article class="badge active" style="--accent:#A78BE8;--progress:38%">
+            <div class="visual genre"><img class="photo" src="asset-concept-clean/moon.jpg" alt=""><img class="icon" src="asset-badges-final/moon-stars.svg" alt=""></div>
+            <div class="copy"><strong>Nuit blanche</strong><span>Voir 8 films d’horreur.</span><div class="progress"><i></i></div><div class="count">3 / 8 · objectif actif</div></div>
+          </article>
+          <article class="badge unlocked" style="--accent:#D29A4A;--progress:100%">
+            <div class="visual genre"><img class="photo" src="asset-concept-clean/paper.jpg" alt=""><img class="icon" src="asset-badges-final/building-bank.svg" alt=""></div>
+            <div class="copy"><strong>Crime parfait</strong><span>Voir 8 thrillers ou films policiers.</span><div class="progress"><i></i></div><div class="count">Débloqué</div></div>
+          </article>
+          <article class="badge" style="--accent:#718DD4;--progress:63%">
+            <div class="visual genre"><img class="photo" src="asset-concept-clean/space.jpg" alt=""><img class="icon" src="asset-badges-final/rocket.svg" alt=""></div>
+            <div class="copy"><strong>Au-delà des étoiles</strong><span>Voir 8 films de science-fiction.</span><div class="progress"><i></i></div><div class="count">5 / 8</div></div>
+          </article>
+          <article class="badge" style="--accent:#ED8FB0;--progress:25%">
+            <div class="visual genre"><img class="photo" src="asset-concept-clean/artist.jpg" alt=""><img class="icon" src="asset-badges-final/brush.svg" alt=""></div>
+            <div class="copy"><strong>Mondes animés</strong><span>Voir 8 films d’animation.</span><div class="progress"><i></i></div><div class="count">2 / 8</div></div>
+          </article>
+          <article class="badge" style="--accent:#E8A45B;--progress:50%">
+            <div class="visual genre"><img class="photo" src="asset-badges-final/comedy.jpg" alt=""><img class="icon" src="asset-badges-final/mood-smile.svg" alt=""></div>
+            <div class="copy"><strong>Éclats de rire</strong><span>Voir 8 comédies.</span><div class="progress"><i></i></div><div class="count">4 / 8</div></div>
+          </article>
+          <article class="badge" style="--accent:#55B8A8;--progress:75%">
+            <div class="visual genre"><img class="photo" src="asset-badges-final/adventure.jpg" alt=""><img class="icon" src="asset-badges-final/mountain.svg" alt=""></div>
+            <div class="copy"><strong>Grande aventure</strong><span>Voir 8 films d’aventure ou fantastiques.</span><div class="progress"><i></i></div><div class="count">6 / 8</div></div>
+          </article>
+        </div>
+
+        <div class="section-title">Exploration</div>
+        <div class="list">
+          <article class="badge" style="--accent:#4EB7A7;--progress:40%">
+            <div class="visual explore"><img class="photo" src="asset-concept-clean/reel.jpg" alt=""><img class="icon" src="asset-badges-final/clock.svg" alt=""></div>
+            <div class="copy"><strong>Machine à remonter le temps</strong><span>Voir 5 films sortis avant 1980.</span><div class="progress"><i></i></div><div class="count">2 / 5</div></div>
+          </article>
+          <article class="badge" style="--accent:#DA8CA9;--progress:67%">
+            <div class="visual explore"><img class="photo" src="asset-badges-final/books.jpg" alt=""><img class="icon" src="asset-badges-final/movie.svg" alt=""></div>
+            <div class="copy"><strong>Marathon de saga</strong><span>Voir 3 films appartenant à la même saga.</span><div class="progress"><i></i></div><div class="count">2 / 3</div></div>
+          </article>
+          <article class="badge" style="--accent:#6D9CCB;--progress:50%">
+            <div class="visual explore"><img class="photo" src="asset-badges-final/world.jpg" alt=""><img class="icon" src="asset-badges-final/route.svg" alt=""></div>
+            <div class="copy"><strong>Tour du monde</strong><span>Voir des films de 6 pays différents.</span><div class="progress"><i></i></div><div class="count">3 / 6 pays</div></div>
+          </article>
+          <article class="badge" style="--accent:#A88BE8;--progress:43%">
+            <div class="visual explore"><img class="photo" src="asset-badges-final/cinema.jpg" alt=""><img class="icon" src="asset-badges-final/calendar-stats.svg" alt=""></div>
+            <div class="copy"><strong>À travers les décennies</strong><span>Un film par décennie depuis les années 1960.</span><div class="progress"><i></i></div><div class="count">3 / 7 décennies</div></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="phone">
+        <div class="phone-head"><h2>Défis cinéma</h2><span>×</span></div>
+
+        <div class="section-title">Exploration</div>
+        <div class="list">
+          <article class="badge" style="--accent:#D8A642;--progress:40%">
+            <div class="visual explore"><img class="photo" src="asset-badges-final/camera.jpg" alt=""><img class="icon" src="asset-badges-final/award.svg" alt=""></div>
+            <div class="copy"><strong>La Palme</strong><span>Voir 5 films ayant remporté la Palme d’or.</span><div class="progress"><i></i></div><div class="count">2 / 5</div></div>
+          </article>
+        </div>
+
+        <div class="section-title">Réalisateurs</div>
+        <div class="list">
+          <article class="badge" style="--accent:#D9A947;--progress:60%">
+            <div class="visual director director-tarantino"><img class="photo" src="asset-badges-final/director-tarantino.jpg" alt="Portrait de Quentin Tarantino"></div>
+            <div class="copy"><strong>100 % Tarantino</strong><span>Voir ses 10 longs métrages principaux.</span><div class="progress"><i></i></div><div class="count">6 / 10</div></div>
+          </article>
+          <article class="badge" style="--accent:#69AFC3;--progress:50%">
+            <div class="visual director director-miyazaki"><img class="photo" src="asset-badges-final/director-miyazaki.jpg" alt="Portrait de Hayao Miyazaki"></div>
+            <div class="copy"><strong>Dans les rêves de Miyazaki</strong><span>Voir 8 films réalisés par Hayao Miyazaki.</span><div class="progress"><i></i></div><div class="count">4 / 8</div></div>
+          </article>
+          <article class="badge unlocked" style="--accent:#7788C4;--progress:100%">
+            <div class="visual director director-nolan"><img class="photo" src="asset-badges-final/director-nolan.jpg" alt="Portrait de Christopher Nolan"></div>
+            <div class="copy"><strong>Le Puzzle Nolan</strong><span>Voir 8 films de Christopher Nolan.</span><div class="progress"><i></i></div><div class="count">Débloqué</div></div>
+          </article>
+          <article class="badge" style="--accent:#C887A8;--progress:60%">
+            <div class="visual director director-scorsese"><img class="photo" src="asset-badges-final/director-scorsese.jpg" alt="Portrait de Martin Scorsese"></div>
+            <div class="copy"><strong>Signature Scorsese</strong><span>Voir 5 films du même réalisateur.</span><div class="progress"><i></i></div><div class="count">3 / 5 · badge dynamique</div></div>
+          </article>
+        </div>
+
+        <div class="section-title">Entre proches</div>
+        <div class="list">
+          <article class="badge" style="--accent:#9B83D1;--progress:67%">
+            <div class="visual family"><img class="photo" src="asset-concept-clean/audience.jpg" alt=""><img class="icon" src="asset-badges-final/users-group.svg" alt=""></div>
+            <div class="copy"><strong>Tous d’accord</strong><span>3 profils donnent au moins 8/10 au même film.</span><div class="progress"><i></i></div><div class="count">2 / 3 avis</div></div>
+          </article>
+          <article class="badge unlocked" style="--accent:#E28AA8;--progress:100%">
+            <div class="visual family"><img class="photo" src="asset-badges-final/teamwork.jpg" alt=""><img class="icon" src="asset-badges-final/gift.svg" alt=""></div>
+            <div class="copy"><strong>Bonne pioche</strong><span>Une recommandation reçoit au moins 8/10.</span><div class="progress"><i></i></div><div class="count">Débloqué</div></div>
+          </article>
+          <article class="badge" style="--accent:#58AA9C;--progress:50%">
+            <div class="visual family"><img class="photo" src="asset-badges-final/adventure.jpg" alt=""><img class="icon" src="asset-badges-final/binoculars.svg" alt=""></div>
+            <div class="copy"><strong>Éclaireur</strong><span>Deux proches voient un film après toi.</span><div class="progress"><i></i></div><div class="count">1 / 2 proches</div></div>
+          </article>
+        </div>
+
+        <div class="section-title">Parcours personnel</div>
+        <div class="list">
+          <article class="badge" style="--accent:#D6A64A;--progress:68%">
+            <div class="visual personal"><img class="photo" src="asset-badges-final/cinema.jpg" alt=""><img class="icon" src="asset-badges-final/trophy.svg" alt=""></div>
+            <div class="copy"><strong>Cinéphile confirmé</strong><span>Noter 50 films dans Le Top.</span><div class="progress"><i></i></div><div class="count">34 / 50 films</div></div>
+          </article>
+          <article class="badge" style="--accent:#E883A7;--progress:60%">
+            <div class="visual personal"><img class="photo" src="asset-badges-final/heart.jpg" alt=""><img class="icon" src="asset-badges-final/heart-star.svg" alt=""></div>
+            <div class="copy"><strong>Collection de coups de cœur</strong><span>Donner 9/10 ou 10/10 à 10 films.</span><div class="progress"><i></i></div><div class="count">6 / 10 films</div></div>
+          </article>
+        </div>
+        <p class="footnote">Chaque badge incomplet proposera trois films pertinents pour progresser.</p>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

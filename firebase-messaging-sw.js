@@ -22,7 +22,7 @@ messaging.onBackgroundMessage(async (payload) => {
   if (payload.notification) return;
 
   const data = payload.data || {};
-  const title = data.movieTitle || data.title || "Le Top 🍿";
+  const title = data.movieTitle || data.title || "Popcorn";
   const posterUrl = data.posterUrl || data.image || "";
   const options = {
     body: data.body || data.message || (data.fromName ? `🍿 ${data.fromName} te recommande ça` : "Nouvelle recommandation reçue"),
