@@ -17,7 +17,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, doc, setDoc, deleteDoc, getDoc, getDocs, onSnapshot, collection, query, where, limit, writeBatch, arrayUnion, arrayRemove, enableNetwork, disableNetwork } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-import { getAuth, setPersistence, indexedDBLocalPersistence, signInAnonymously, onAuthStateChanged, deleteUser } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { deleteUser } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js";
 import { getMessaging, getToken, isSupported as isMessagingSupported, onMessage } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js";
 
@@ -566,9 +566,22 @@ const sagaMovieDetailsCache = new Map();
 
 const app = initializeApp(FIREBASE_CONFIG);
 const db  = getFirestore(app);
-const auth = getAuth(app);
 const functions = getFunctions(app, "europe-west1");
 
+// Anciens identifiants de compte secure (tes 2 appareils) : on les fait pointer vers ton vrai
+// profil legacy "kevin" au lieu de laisser réapparaître des fiches basées sur leur UID technique.
+const STALE_SECURE_UID_TO_LEGACY_NAME = {
+  "tmKiA2DQLzMg9OCrMxThfuzdzXD3": "kevin",
+  "85EgHOChFWac9WyFgrBv4fDHGkB2": "kevin"
+};
+(() => {
+  const stored = localStorage.getItem("letop_user");
+  const mapped = stored && STALE_SECURE_UID_TO_LEGACY_NAME[stored];
+  if (mapped) {
+    localStorage.setItem("letop_user", mapped);
+    localStorage.setItem("letop_user_name", mapped);
+  }
+})();
 const legacyProfileId = localStorage.getItem("letop_user") || null;
 let currentUser  = null;
 let viewingUser  = currentUser;
@@ -814,13 +827,20 @@ async function createCircleInvite() {
   }
 }
 
+// Identité des participants = profil legacy (currentUser, ex. "kevin"), pas un UID Firebase.
+// Les invitations passent par la collection "sentRecos" déjà utilisée pour les recos legacy
+// (un doc par destinataire, id déterministe mn_<nightId>_<profil> pour pouvoir le retrouver
+// sans requête supplémentaire à l'acceptation/refus).
+function movieNightInviteDocRef(nightId, invitedId) {
+  return doc(db, "sentRecos", `mn_${nightId}_${invitedId}`);
+}
+
 async function createMovieNight(invitedIds) {
-  if (!secureUser || !activeGroupId || !invitedIds.length) return null;
+  if (!currentUser || !invitedIds.length) return null;
   const nightId = randomSecureId("night_");
   const payload = {
-    hostUid: secureUser.uid,
-    groupId: activeGroupId,
-    participantIds: [secureUser.uid],
+    hostUid: currentUser,
+    participantIds: [currentUser],
     invitedIds: [...invitedIds],
     status: "collecting",
     candidates: [],
@@ -830,10 +850,9 @@ async function createMovieNight(invitedIds) {
     updatedAt: Date.now()
   };
   await setDoc(doc(db, "movieNights", nightId), payload);
-  await Promise.all(invitedIds.map(uid => setDoc(doc(db, "users", uid, "inbox", nightId), {
-    to: uid,
-    from: secureUser.uid,
-    groupId: activeGroupId,
+  await Promise.all(invitedIds.map(id => setDoc(movieNightInviteDocRef(nightId, id), {
+    to: id,
+    from: currentUser,
     type: "movie-night",
     movieNightId: nightId,
     seen: false,
@@ -843,17 +862,16 @@ async function createMovieNight(invitedIds) {
 }
 
 async function addMovieNightInvites(night, extraIds) {
-  if (!secureUser || night.hostUid !== secureUser.uid || night.status !== "collecting") return;
+  if (!currentUser || night.hostUid !== currentUser || night.status !== "collecting") return;
   const existing = new Set(night.invitedIds || []);
   const alreadyIn = new Set(night.participantIds || []);
   const fresh = extraIds.filter(id => !existing.has(id) && !alreadyIn.has(id));
   if (!fresh.length) return;
   const invitedIds = [...(night.invitedIds || []), ...fresh];
   await setDoc(doc(db, "movieNights", night.id), { invitedIds, updatedAt: Date.now() }, { merge: true });
-  await Promise.all(fresh.map(uid => setDoc(doc(db, "users", uid, "inbox", night.id), {
-    to: uid,
-    from: secureUser.uid,
-    groupId: night.groupId,
+  await Promise.all(fresh.map(id => setDoc(movieNightInviteDocRef(night.id, id), {
+    to: id,
+    from: currentUser,
     type: "movie-night",
     movieNightId: night.id,
     seen: false,
@@ -862,35 +880,35 @@ async function addMovieNightInvites(night, extraIds) {
 }
 
 async function acceptMovieNightInvite(nightId) {
-  if (!secureUser || !nightId) return;
+  if (!currentUser || !nightId) return;
   const nightRef = doc(db, "movieNights", nightId);
   const snap = await getDoc(nightRef);
   if (!snap.exists()) {
     showToast("Cette soirée n'existe plus");
-    await deleteDoc(doc(db, "users", secureUser.uid, "inbox", nightId)).catch(() => {});
+    await deleteDoc(movieNightInviteDocRef(nightId, currentUser)).catch(() => {});
     return;
   }
   const data = snap.data();
-  const invitedIds = (data.invitedIds || []).filter(id => id !== secureUser.uid);
-  const participantIds = [...(data.participantIds || []), secureUser.uid];
+  const invitedIds = (data.invitedIds || []).filter(id => id !== currentUser);
+  const participantIds = [...(data.participantIds || []), currentUser];
   await setDoc(nightRef, { invitedIds, participantIds, updatedAt: Date.now() }, { merge: true });
-  await deleteDoc(doc(db, "users", secureUser.uid, "inbox", nightId)).catch(() => {});
+  await deleteDoc(movieNightInviteDocRef(nightId, currentUser)).catch(() => {});
   openMovieNightSheet(nightId);
 }
 
 async function declineMovieNightInvite(nightId) {
-  if (!secureUser || !nightId) return;
+  if (!currentUser || !nightId) return;
   const nightRef = doc(db, "movieNights", nightId);
   const snap = await getDoc(nightRef);
   if (snap.exists()) {
-    const invitedIds = (snap.data().invitedIds || []).filter(id => id !== secureUser.uid);
+    const invitedIds = (snap.data().invitedIds || []).filter(id => id !== currentUser);
     await setDoc(nightRef, { invitedIds, updatedAt: Date.now() }, { merge: true }).catch(() => {});
   }
-  await deleteDoc(doc(db, "users", secureUser.uid, "inbox", nightId)).catch(() => {});
+  await deleteDoc(movieNightInviteDocRef(nightId, currentUser)).catch(() => {});
 }
 
 async function startMovieNightVoting(night) {
-  if (!secureUser || night.hostUid !== secureUser.uid || night.status !== "collecting") return;
+  if (!currentUser || night.hostUid !== currentUser || night.status !== "collecting") return;
   const candidates = buildMovieNightCandidates(night.participantIds || []);
   if (!candidates.length) {
     showToast("Personne n'a de film en commun dans sa liste À voir");
@@ -900,13 +918,13 @@ async function startMovieNightVoting(night) {
 }
 
 async function castMovieNightVote(night, movieId) {
-  if (!secureUser || night.status !== "voting") return;
-  const votes = { ...(night.votes || {}), [secureUser.uid]: Number(movieId) };
+  if (!currentUser || night.status !== "voting") return;
+  const votes = { ...(night.votes || {}), [currentUser]: Number(movieId) };
   await setDoc(doc(db, "movieNights", night.id), { votes, updatedAt: Date.now() }, { merge: true });
 }
 
 async function revealMovieNightWinner(night) {
-  if (!secureUser || night.status !== "voting") return;
+  if (!currentUser || night.status !== "voting") return;
   const tally = new Map();
   Object.values(night.votes || {}).forEach(movieId => {
     const id = Number(movieId);
@@ -1098,32 +1116,12 @@ async function startSecureData(profile) {
   renderPage();
 }
 
-async function bootstrapFirebaseAuth() {
-  try {
-    await setPersistence(auth, indexedDBLocalPersistence);
-    onAuthStateChanged(auth, async firebaseUser => {
-      try {
-        if (!firebaseUser) {
-          await signInAnonymously(auth);
-          return;
-        }
-        const profile = await ensureSecureAccount(firebaseUser);
-        authReady = true;
-        await startSecureData(profile);
-      } catch (error) {
-        authSetupError = error;
-        authReady = true;
-        console.error("Secure account bootstrap failed", error);
-        startLegacyDataFallback(error);
-        renderPage();
-      }
-    });
-  } catch (error) {
-    authSetupError = error;
-    authReady = true;
-    startLegacyDataFallback(error);
-    renderPage();
-  }
+function bootstrapFirebaseAuth() {
+  // Mode legacy uniquement : pas de connexion Firebase Auth, pas d'UID, pas de cercle.
+  // L'identité est le profil legacy (nom) déjà stocké localement, comme avant les comptes secure.
+  authReady = true;
+  startLegacyDataFallback();
+  renderPage();
 }
 
 async function saveRankingToCloud(userId, rankedArray) {
@@ -1298,7 +1296,15 @@ async function createProfile(id, name) {
   updateProfileDocSource("rankings", [...PROFILE_DOC_SOURCES.rankings.filter(p => p.id !== id), payload]);
   publishedProfileIds.add(id);
 }
+function looksLikeFirebaseUid(id) {
+  // UID Firebase Auth : ~28 caractères alphanumériques mixtes, sans tiret ni espace.
+  // Un profil legacy est toujours un nom simple (ex. "kevin") : jamais cette forme.
+  return typeof id === "string" && id.length >= 20 && /^[A-Za-z0-9]+$/.test(id) && /[A-Z]/.test(id) && /[0-9]/.test(id);
+}
 async function ensureProfileInCloud(userId, preferredName = "") {
+  // Garde-fou : ne jamais publier/recréer un profil legacy sous un identifiant qui ressemble
+  // à un UID de compte secure (évite les doublons fantômes déjà rencontrés plusieurs fois).
+  if (looksLikeFirebaseUid(userId)) return;
   if (!userId || repairingProfileIds.has(userId) || publishedProfileIds.has(userId)) return;
   repairingProfileIds.add(userId);
   const payload = profilePayload(userId, preferredName);
@@ -1439,7 +1445,7 @@ function startLegacyDataFallback(error) {
   secureUser = null;
   currentUser = legacyProfileId;
   viewingUser = currentUser;
-  console.warn("Popcorn is using the temporary legacy data mode", error);
+  if (error) console.warn("Popcorn is using legacy data mode after an auth error", error);
 
   legacyDataUnsubs.push(listenProfiles((list, metadata) => {
     PROFILES = list;
@@ -3521,8 +3527,8 @@ function renderFriendsTabContent(viewed) {
     return `
       ${renderCollectionIntro("PROCHES", "Amis", "Aucun autre profil synchronisé")}
       <div class="empty-state">
-        <div>Ton cercle est encore vide. Invite un proche pour comparer vos Tops et vous recommander des films.</div>
-        <button class="btn-primary" id="btn-invite-first-friend" type="button">Inviter un proche</button>
+        <div>${legacyFallbackMode ? "Aucun autre profil pour l'instant." : "Ton cercle est encore vide. Invite un proche pour comparer vos Tops et vous recommander des films."}</div>
+        ${legacyFallbackMode ? "" : `<button class="btn-primary" id="btn-invite-first-friend" type="button">Inviter un proche</button>`}
       </div>`;
   }
   const viewedTop = allRankings[viewed.id] || [];
@@ -3541,10 +3547,11 @@ function renderFriendsTabContent(viewed) {
           <small>${escapeHtml(p.name)}</small>
         </button>`;
       }).join("")}
+      ${legacyFallbackMode ? "" : `
       <button class="friend-chip friend-chip-invite" id="btn-invite-friend" type="button" aria-label="Inviter dans mon cercle">
         <span class="friend-chip-avatar"><b>+</b></span>
         <small>Inviter</small>
-      </button>
+      </button>`}
     </div>
     <button class="movie-night-cta" id="btn-open-movie-night" type="button">
       ${surfaceIconHtml("clapperboard", "movie-night-cta-icon")}
@@ -5496,6 +5503,7 @@ function renderSettingsSheetContent() {
         <div class="settings-meta">${topCount} top · ${watchedCount} vus · ${watchlistCount} à voir</div>
       </div>
     </div>
+    ${legacyFallbackMode ? "" : `
     <div class="settings-group">
       <button class="context-item settings-item" data-action="privacy" type="button">
         ${surfaceIconHtml(me.privacy === PRIVACY_MODE_PRIVATE ? "lock" : "users", "settings-icon")}
@@ -5505,7 +5513,7 @@ function renderSettingsSheetContent() {
         ${surfaceIconHtml("share", "settings-icon")}
         <span><strong>Inviter dans mon cercle</strong><small>Lien privé valable 7 jours</small></span>
       </button>
-    </div>
+    </div>`}
     <div class="settings-group">
       <button class="context-item settings-item" data-action="notifications" type="button">
         ${surfaceIconHtml(notificationIconName(), "settings-icon")}

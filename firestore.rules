@@ -195,16 +195,17 @@ service cloud.firestore {
       allow delete: if signedIn() && resource.data.hostUid == request.auth.uid;
     }
 
-    // Migration temporaire : lecture ciblée du profil local, jamais de listing.
-    // À supprimer après le 1er août 2026, une fois les appareils migrés.
+    // Système legacy (profils par nom) : redevenu le mode de fonctionnement principal de l'app.
+    // list ajouté pour que l'onglet Amis affiche tous les profils du foyer, comme avant les comptes secure.
     match /{legacyCollection}/{legacyId} {
       allow get: if signedIn()
-        && legacyCollection in ['profiles', 'profileIndex', 'rankings', 'watched', 'watchlist', 'recoPrefs']
-        && request.time < timestamp.date(2026, 8, 1);
+        && legacyCollection in ['profiles', 'profileIndex', 'rankings', 'watched', 'watchlist', 'recoPrefs'];
+      allow list: if signedIn()
+        && legacyCollection in ['profiles', 'profileIndex', 'rankings', 'watched', 'watchlist'];
       allow delete: if signedIn()
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
         && userData(request.auth.uid).legacyProfileId == legacyId;
-      allow list, create, update: if false;
+      allow create, update: if false;
     }
 
     match /pushTokens/{legacyId}/{document=**} {
