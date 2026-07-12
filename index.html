@@ -2253,19 +2253,12 @@ function badgeHasDiscoverSource(challenge) {
 }
 async function fetchBadgeMoviesDiscoverPage(challenge, page) {
   if (challenge.genreIds?.length) {
-    const data = await tmdbFetch("/discover/movie", {
-      include_adult: "false",
-      include_video: "false",
-      with_genres: challenge.genreIds.join("|"),
+    return await discoverMoviesByGenres(challenge.genreIds, {
+      genreOperator: "or",
       sort_by: "vote_count.desc",
       "vote_count.gte": "20",
       page
     });
-    if (page === 1) {
-      console.log("[badge-debug]", challenge.id, "total_results:", data.total_results, "total_pages:", data.total_pages, "results.length:", (data.results || []).length);
-      showToast(`Debug ${challenge.id}: total_results=${data.total_results}, total_pages=${data.total_pages}`);
-    }
-    return data.results || [];
   }
   if (challenge.beforeYear) {
     const data = await tmdbFetch("/discover/movie", {
@@ -2303,6 +2296,7 @@ function createBadgeMoviesState(challenge) {
     poolReady: false,
     discoverPage: 1,
     discoverExhausted: false,
+    emptyRounds: 0,
     exhausted: false,
     loading: false,
     scrollTop: 0
@@ -2387,7 +2381,7 @@ async function loadMoreBadgeMovies(state, container) {
 
     if (!state.isSaga && batch.length < BADGE_MOVIES_PAGE_SIZE && !state.discoverExhausted && badgeHasDiscoverSource(state.challenge)) {
       let attempts = 0;
-      while (batch.length < BADGE_MOVIES_PAGE_SIZE && attempts < 4 && !state.discoverExhausted) {
+      while (batch.length < BADGE_MOVIES_PAGE_SIZE && attempts < 10 && !state.discoverExhausted) {
         attempts += 1;
         const results = await fetchBadgeMoviesDiscoverPage(state.challenge, state.discoverPage);
         if (badgeMoviesState !== state) return;
@@ -2421,11 +2415,18 @@ async function loadMoreBadgeMovies(state, container) {
   else clearBadgeMoviesLoadMoreSkeleton(container);
 
   if (!batch.length) {
+    const canRetryForMore = !state.isSaga && !state.discoverExhausted && badgeHasDiscoverSource(state.challenge);
+    state.emptyRounds += 1;
+    if (canRetryForMore && state.emptyRounds < 6) {
+      loadMoreBadgeMovies(state, container);
+      return;
+    }
     state.exhausted = true;
     if (!state.items.length) container.innerHTML = `<div class="badge-movies-empty">Aucun film disponible pour le moment.</div>`;
     return;
   }
 
+  state.emptyRounds = 0;
   state.items.push(...batch);
   appendBadgeMovieCards(container, batch);
   if (!state.pool.length && (state.isSaga || state.discoverExhausted || !badgeHasDiscoverSource(state.challenge))) {
