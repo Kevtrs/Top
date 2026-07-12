@@ -2450,11 +2450,12 @@ function ensureBadgeMoviesScrollListener() {
   sheet.addEventListener("scroll", onBadgeMoviesScroll, { passive: true });
 }
 function onBadgeMoviesScroll(event) {
-  if (badgeMoviesScrollTicking) return;
+  // event.currentTarget est null une fois le dispatch terminé : à capturer avant le rAF.
+  const sheet = event.currentTarget;
+  if (!sheet || badgeMoviesScrollTicking) return;
   badgeMoviesScrollTicking = true;
   requestAnimationFrame(() => {
     badgeMoviesScrollTicking = false;
-    const sheet = event.currentTarget;
     const state = badgeMoviesState;
     if (!state) return;
     state.scrollTop = sheet.scrollTop;
@@ -2522,11 +2523,13 @@ async function openBadgeMoviesSheet(challengeId) {
     showToast(`${challenge.name} devient ton objectif`);
   });
   document.getElementById("btn-toggle-showcase-badge")?.addEventListener("click", async event => {
-    event.currentTarget.disabled = true;
+    // event.currentTarget est null après un await : à capturer avant.
+    const button = event.currentTarget;
+    button.disabled = true;
     const changed = await toggleShowcaseBadge(challenge);
-    event.currentTarget.disabled = false;
+    button.disabled = false;
     if (changed) {
-      event.currentTarget.textContent = isBadgeShowcased(challenge.id) ? "★ Dans ta vitrine" : "☆ Ajouter à ta vitrine";
+      button.textContent = isBadgeShowcased(challenge.id) ? "★ Dans ta vitrine" : "☆ Ajouter à ta vitrine";
       if (activeTab === "badges") refreshBadgesTabIfActive();
     }
   });
