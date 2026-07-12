@@ -16,7 +16,7 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, doc, setDoc, deleteDoc, getDoc, getDocs, onSnapshot, collection, query, where, limit, writeBatch, arrayUnion, arrayRemove, enableNetwork, disableNetwork } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, doc, setDoc, deleteDoc, getDoc, getDocs, onSnapshot, collection, query, where, limit, writeBatch, arrayUnion, arrayRemove, deleteField, enableNetwork, disableNetwork } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { deleteUser } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-functions.js";
 import { getMessaging, getToken, isSupported as isMessagingSupported, onMessage } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js";
@@ -1052,6 +1052,12 @@ let activeGroup = null;
 let activeMovieNight = null;
 let movieNightUnsub = null;
 let movieNightInviteSelection = new Set();
+let ongoingMovieNight = null;
+let ongoingMovieNightsUnsub = null;
+let movieNightPickSearchTimer = null;
+const movieNightAutoRevealFired = new Set();
+const movieNightConfettiFired = new Set();
+const MOVIE_NIGHT_MAX_AGE_MS = 20 * 60 * 60 * 1000;
 let secureDataReady = false;
 let secureDataUnsubs = [];
 const secureSubscribedMembers = new Set();
@@ -1294,57 +1300,158 @@ async function acceptMovieNightInvite(nightId) {
   if (!currentUser || !nightId) return;
   const nightRef = doc(db, "movieNights", nightId);
   const snap = await getDoc(nightRef);
-  if (!snap.exists()) {
+  if (!snap.exists() || movieNightIsExpired({ id: nightId, ...snap.data() })) {
     showToast("Cette soirée n'existe plus");
     await deleteDoc(movieNightInviteDocRef(nightId, currentUser)).catch(() => {});
     return;
   }
-  const data = snap.data();
-  const invitedIds = (data.invitedIds || []).filter(id => id !== currentUser);
-  const participantIds = [...(data.participantIds || []), currentUser];
-  await setDoc(nightRef, { invitedIds, participantIds, updatedAt: Date.now() }, { merge: true });
+  await setDoc(nightRef, {
+    invitedIds: arrayRemove(currentUser),
+    participantIds: arrayUnion(currentUser),
+    updatedAt: Date.now()
+  }, { merge: true });
   await deleteDoc(movieNightInviteDocRef(nightId, currentUser)).catch(() => {});
   openMovieNightSheet(nightId);
 }
 
 async function declineMovieNightInvite(nightId) {
   if (!currentUser || !nightId) return;
-  const nightRef = doc(db, "movieNights", nightId);
-  const snap = await getDoc(nightRef);
-  if (snap.exists()) {
-    const invitedIds = (snap.data().invitedIds || []).filter(id => id !== currentUser);
-    await setDoc(nightRef, { invitedIds, updatedAt: Date.now() }, { merge: true }).catch(() => {});
-  }
+  await setDoc(doc(db, "movieNights", nightId), {
+    invitedIds: arrayRemove(currentUser),
+    updatedAt: Date.now()
+  }, { merge: true }).catch(() => {});
   await deleteDoc(movieNightInviteDocRef(nightId, currentUser)).catch(() => {});
+}
+
+async function leaveMovieNight(night) {
+  if (!currentUser || night.hostUid === currentUser || night.status !== "collecting") return;
+  await setDoc(doc(db, "movieNights", night.id), {
+    participantIds: arrayRemove(currentUser),
+    picks: { [currentUser]: deleteField() },
+    updatedAt: Date.now()
+  }, { merge: true }).catch(() => {});
+  closeMovieNightSheet();
+  showToast("Tu as quitté la soirée");
+}
+
+async function setMovieNightPick(night, movie) {
+  if (!currentUser || night.status !== "collecting") return;
+  if (!(night.participantIds || []).includes(currentUser)) return;
+  await setDoc(doc(db, "movieNights", night.id), {
+    picks: { [currentUser]: movie ? movieNightCandidatePayload(movie) : deleteField() },
+    updatedAt: Date.now()
+  }, { merge: true }).catch(() => showToast("Impossible d'enregistrer ton choix"));
 }
 
 async function startMovieNightVoting(night) {
   if (!currentUser || night.hostUid !== currentUser || night.status !== "collecting") return;
-  const candidates = buildMovieNightCandidates(night.participantIds || []);
-  if (!candidates.length) {
-    showToast("Personne n'a de film en commun dans sa liste À voir");
+  if ((night.participantIds || []).length < 2) {
+    showToast("Attends qu'au moins un ami rejoigne la soirée");
     return;
   }
-  await setDoc(doc(db, "movieNights", night.id), { status: "voting", candidates, updatedAt: Date.now() }, { merge: true });
+  const { candidates, sources } = buildMovieNightCandidates(night);
+  if (!candidates.length) {
+    showToast("Aucun film trouvé : ajoutez des films à vos listes À voir ou choisissez-en un");
+    return;
+  }
+  await setDoc(doc(db, "movieNights", night.id), {
+    status: "voting",
+    candidates,
+    candidateSources: sources,
+    votes: {},
+    updatedAt: Date.now()
+  }, { merge: true });
 }
 
 async function castMovieNightVote(night, movieId) {
   if (!currentUser || night.status !== "voting") return;
-  const votes = { ...(night.votes || {}), [currentUser]: Number(movieId) };
-  await setDoc(doc(db, "movieNights", night.id), { votes, updatedAt: Date.now() }, { merge: true });
+  await setDoc(doc(db, "movieNights", night.id), {
+    votes: { [currentUser]: Number(movieId) },
+    updatedAt: Date.now()
+  }, { merge: true }).catch(() => showToast("Vote non enregistré, réessaie"));
+}
+
+function movieNightHashInt(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = ((hash * 31) + str.charCodeAt(i)) | 0;
+  return Math.abs(hash);
+}
+
+function computeMovieNightWinner(night) {
+  const tally = new Map();
+  Object.values(night.votes || {}).forEach(movieId => {
+    const id = Number(movieId);
+    if (id) tally.set(id, (tally.get(id) || 0) + 1);
+  });
+  const candidateIds = (night.candidates || []).map(c => Number(c.id));
+  if (!tally.size) return { winnerMovieId: candidateIds[0] ?? null, tieBreak: false };
+  const best = Math.max(...tally.values());
+  const tied = candidateIds.filter(id => tally.get(id) === best);
+  if (tied.length <= 1) return { winnerMovieId: tied[0] ?? candidateIds[0] ?? null, tieBreak: false };
+  // Départage déterministe : le même "tirage au sort" sur tous les appareils.
+  return { winnerMovieId: tied[movieNightHashInt(night.id) % tied.length], tieBreak: true };
 }
 
 async function revealMovieNightWinner(night) {
   if (!currentUser || night.status !== "voting") return;
-  const tally = new Map();
-  Object.values(night.votes || {}).forEach(movieId => {
-    const id = Number(movieId);
-    tally.set(id, (tally.get(id) || 0) + 1);
-  });
-  let winnerMovieId = night.candidates?.[0]?.id ?? null;
-  let best = -1;
-  tally.forEach((count, id) => { if (count > best) { best = count; winnerMovieId = id; } });
-  await setDoc(doc(db, "movieNights", night.id), { status: "revealed", winnerMovieId, updatedAt: Date.now() }, { merge: true });
+  const { winnerMovieId, tieBreak } = computeMovieNightWinner(night);
+  await setDoc(doc(db, "movieNights", night.id), {
+    status: "revealed",
+    winnerMovieId,
+    tieBreak,
+    updatedAt: Date.now()
+  }, { merge: true }).catch(() => {});
+}
+
+async function restartMovieNightVote(night) {
+  if (!currentUser || night.hostUid !== currentUser || night.status !== "revealed") return;
+  const remaining = (night.candidates || []).filter(c => Number(c.id) !== Number(night.winnerMovieId));
+  if (remaining.length < 2) {
+    showToast("Plus assez de films pour revoter");
+    return;
+  }
+  const sources = { ...(night.candidateSources || {}) };
+  delete sources[String(night.winnerMovieId)];
+  await setDoc(doc(db, "movieNights", night.id), {
+    status: "voting",
+    candidates: remaining,
+    candidateSources: sources,
+    votes: {},
+    winnerMovieId: null,
+    tieBreak: false,
+    updatedAt: Date.now()
+  }, { merge: true }).catch(() => {});
+}
+
+async function cleanupMovieNightInvites(night) {
+  await Promise.all((night.invitedIds || []).map(id =>
+    deleteDoc(movieNightInviteDocRef(night.id, id)).catch(() => {})
+  ));
+}
+
+async function finishMovieNight(night) {
+  if (!currentUser || night.hostUid !== currentUser) return;
+  await cleanupMovieNightInvites(night);
+  await setDoc(doc(db, "movieNights", night.id), { status: "done", updatedAt: Date.now() }, { merge: true }).catch(() => {});
+  closeMovieNightSheet();
+  showToast("Bonne séance !");
+}
+
+async function cancelMovieNight(night) {
+  if (!currentUser || night.hostUid !== currentUser) return;
+  await cleanupMovieNightInvites(night);
+  await deleteDoc(doc(db, "movieNights", night.id)).catch(() => {});
+  closeMovieNightSheet();
+  showToast("Soirée annulée");
+}
+
+function movieNightIsExpired(night) {
+  return !night || night.status === "done" || (Date.now() - Number(night.createdAt || 0)) > MOVIE_NIGHT_MAX_AGE_MS;
+}
+
+function movieNightEveryoneVoted(night) {
+  const participants = night.participantIds || [];
+  return participants.length >= 2 && participants.every(uid => night.votes && night.votes[uid] != null);
 }
 
 function stopMovieNightListener() {
@@ -1361,8 +1468,41 @@ function listenMovieNight(nightId) {
       return;
     }
     activeMovieNight = { id: snap.id, ...snap.data() };
+    // Résultat automatique dès que tout le monde a voté (écriture idempotente :
+    // le gagnant est calculé de façon déterministe, un double envoi est sans effet).
+    if (activeMovieNight.status === "voting" && movieNightEveryoneVoted(activeMovieNight) && !movieNightAutoRevealFired.has(activeMovieNight.id)) {
+      movieNightAutoRevealFired.add(activeMovieNight.id);
+      revealMovieNightWinner(activeMovieNight);
+    }
     if (document.getElementById("movie-night-overlay")?.classList.contains("show")) renderMovieNightSheet();
   }, () => {});
+}
+
+function stopOngoingMovieNightsListener() {
+  if (ongoingMovieNightsUnsub) { try { ongoingMovieNightsUnsub(); } catch (e) {} }
+  ongoingMovieNightsUnsub = null;
+}
+
+// Garde en mémoire la soirée en cours (hôte ou participant) pour que le bouton
+// de l'onglet Amis permette d'y revenir au lieu d'en recréer une à chaque fois.
+function listenOngoingMovieNights() {
+  stopOngoingMovieNightsListener();
+  if (!currentUser) return;
+  ongoingMovieNightsUnsub = onSnapshot(
+    query(collection(db, "movieNights"), where("participantIds", "array-contains", currentUser)),
+    snap => {
+      const nights = [];
+      snap.forEach(d => nights.push({ id: d.id, ...d.data() }));
+      const fresh = nights
+        .filter(night => !movieNightIsExpired(night))
+        .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+      const next = fresh[0] || null;
+      const changed = (next?.id || null) !== (ongoingMovieNight?.id || null) || (next?.status || null) !== (ongoingMovieNight?.status || null);
+      ongoingMovieNight = next;
+      if (changed && activeTab === "friends") renderPagePreservingScroll();
+    },
+    () => {}
+  );
 }
 
 async function setProfilePrivacy(mode) {
@@ -1896,6 +2036,8 @@ function startLegacyDataFallback(error) {
     incomingRecos = data;
     if (profilesSynced && rankingsSynced && currentUser && !onboardingNewUser) renderPagePreservingScroll();
   }));
+  listenOngoingMovieNights();
+  legacyDataUnsubs.push(stopOngoingMovieNightsListener);
   setTimeout(() => {
     profilesSynced = true;
     rankingsSynced = true;
@@ -3241,23 +3383,47 @@ function movieNightCandidatePayload(movie) {
   };
 }
 
-function buildMovieNightCandidates(participantIds) {
+// Construit jusqu'à 6 candidats pour le vote, dans cet ordre de priorité :
+// 1. les films choisis explicitement par les participants ("ton film pour ce soir"),
+// 2. les films présents dans plusieurs listes À voir (personne ne les a déjà vus),
+// 3. en complément, les meilleurs films des listes À voir individuelles.
+// Retourne aussi la provenance de chaque candidat pour l'afficher pendant le vote.
+function buildMovieNightCandidates(night) {
+  const participantIds = night.participantIds || [];
+  const picks = night.picks || {};
   const seenIds = new Set();
   participantIds.forEach(uid => (allWatched[uid] || []).forEach(movie => seenIds.add(Number(movie.id))));
-  const tally = new Map();
+
+  const pool = new Map();
+  const entryFor = movie => {
+    const id = Number(movie.id);
+    if (!pool.has(id)) pool.set(id, { movie, pickers: [], listers: [] });
+    return pool.get(id);
+  };
+
+  participantIds.forEach(uid => {
+    const pick = picks[uid];
+    if (pick?.id) entryFor(pick).pickers.push(uid);
+  });
   participantIds.forEach(uid => {
     (allWatchlist[uid] || []).forEach(movie => {
       const id = Number(movie.id);
       if (!id || seenIds.has(id)) return;
-      const entry = tally.get(id) || { movie, count: 0 };
-      entry.count += 1;
-      tally.set(id, entry);
+      const entry = entryFor(movie);
+      if (!entry.listers.includes(uid)) entry.listers.push(uid);
     });
   });
-  return [...tally.values()]
-    .sort((a, b) => b.count - a.count || (Number(b.movie.vote_average) || 0) - (Number(a.movie.vote_average) || 0))
-    .slice(0, 3)
-    .map(entry => movieNightCandidatePayload(entry.movie));
+
+  const ranked = [...pool.values()].sort((a, b) =>
+    (b.pickers.length * 100 + b.listers.length * 10 + (Number(b.movie.vote_average) || 0)) -
+    (a.pickers.length * 100 + a.listers.length * 10 + (Number(a.movie.vote_average) || 0))
+  ).slice(0, 6);
+
+  const sources = {};
+  ranked.forEach(entry => {
+    sources[String(Number(entry.movie.id))] = { pickers: entry.pickers, listers: entry.listers };
+  });
+  return { candidates: ranked.map(entry => movieNightCandidatePayload(entry.movie)), sources };
 }
 function isPushConfigured() {
   return FCM_VAPID_KEY.trim().length > 20;
@@ -4228,11 +4394,26 @@ function renderFriendsTabContent(viewed) {
         <small>Inviter</small>
       </button>`}
     </div>
+    ${(() => {
+      if (ongoingMovieNight) {
+        const statusLabel = ongoingMovieNight.status === "collecting" ? "invitations en cours"
+          : ongoingMovieNight.status === "voting" ? "le vote est ouvert"
+          : "résultat dévoilé";
+        return `
+    <button class="movie-night-cta is-ongoing" id="btn-open-movie-night" data-ongoing-id="${escapeAttr(ongoingMovieNight.id)}" type="button">
+      ${surfaceIconHtml("clapperboard", "movie-night-cta-icon")}
+      <span class="movie-night-cta-copy"><strong>Reprendre la soirée</strong><small>Soirée cinéma · ${statusLabel}</small></span>
+      <i class="movie-night-cta-live"></i>
+      <b class="movie-night-cta-arrow">›</b>
+    </button>`;
+      }
+      return `
     <button class="movie-night-cta" id="btn-open-movie-night" type="button">
       ${surfaceIconHtml("clapperboard", "movie-night-cta-icon")}
       <span class="movie-night-cta-copy"><strong>Soirée cinéma</strong><small>Choisissez un film ensemble, ce soir</small></span>
       <b class="movie-night-cta-arrow">›</b>
-    </button>
+    </button>`;
+    })()}
     <button class="friend-hero" id="btn-friend-profile" data-id="${escapeAttr(viewed.id)}" type="button" aria-label="Ouvrir le profil de ${escapeAttr(viewed.name)}">
       ${profileAvatarHtml(viewed.id, 54)}
       <span class="friend-hero-copy">
@@ -4300,69 +4481,217 @@ function movieNightCandidateArt(candidate) {
     : `<span class="movie-night-candidate-empty">${escapeHtml(candidate.title)}</span>`;
 }
 
+function movieNightStepperHtml(status) {
+  const steps = [
+    { id: "collecting", label: "Invitations" },
+    { id: "voting", label: "Vote" },
+    { id: "revealed", label: "Résultat" }
+  ];
+  const currentIndex = Math.max(0, steps.findIndex(step => step.id === status));
+  return `<div class="movie-night-stepper" aria-hidden="true">${steps.map((step, index) => `
+    <span class="movie-night-step ${index < currentIndex ? "done" : ""} ${index === currentIndex ? "active" : ""}">
+      <i>${index < currentIndex ? tabIconHtml("check") : index + 1}</i>${step.label}
+    </span>${index < steps.length - 1 ? '<b class="movie-night-step-line"></b>' : ""}`).join("")}
+  </div>`;
+}
+
+function movieNightPickQuickChoices() {
+  const seenByGroup = new Set();
+  (activeMovieNight?.participantIds || []).forEach(uid => (allWatched[uid] || []).forEach(movie => seenByGroup.add(Number(movie.id))));
+  return myWatchlist().filter(movie => !seenByGroup.has(Number(movie.id))).slice(0, 6);
+}
+
 function renderMovieNightCollecting(night, isHost) {
   const accepted = night.participantIds || [];
   const invited = night.invitedIds || [];
+  const picks = night.picks || {};
   const rows = [...accepted, ...invited].map(uid => {
     const profile = profileById(uid) || fallbackProfile(uid);
     const isAccepted = accepted.includes(uid);
+    const hasPick = isAccepted && picks[uid]?.id;
     return `<div class="movie-night-guest-row">
       ${profileAvatarHtml(uid, 36)}
-      <span>${escapeHtml(profile.name)}</span>
-      <small class="${isAccepted ? "is-accepted" : ""}">${uid === night.hostUid ? "Hôte" : isAccepted ? "A rejoint" : "En attente"}</small>
+      <span>${escapeHtml(profile.name)}${uid === night.hostUid ? '<em class="movie-night-host-tag">Hôte</em>' : ""}</span>
+      ${hasPick ? `<i class="movie-night-guest-pick" title="A choisi son film">${tabIconHtml("check")} film choisi</i>` : ""}
+      <small class="${isAccepted ? "is-accepted" : ""}">${isAccepted ? "Prêt·e" : "En attente"}</small>
     </div>`;
   }).join("");
   const remainingFriends = friendProfiles().filter(p => !accepted.includes(p.id) && !invited.includes(p.id));
+  const myPick = picks[currentUser];
+  const quickChoices = movieNightPickQuickChoices();
   return `
+    ${movieNightStepperHtml("collecting")}
     <div class="movie-night-kicker">SOIRÉE EN PRÉPARATION</div>
     <h2>On attend les copains</h2>
     <div class="movie-night-guest-list">${rows}</div>
+
+    <div class="movie-night-pick-zone">
+      <div class="movie-night-pick-heading"><strong>Ton film pour ce soir</strong><span>Il sera proposé au vote du groupe</span></div>
+      ${myPick?.id ? `
+        <div class="movie-night-my-pick">
+          ${myPick.poster_path ? `<img src="${escapeAttr(TMDB_IMG + myPick.poster_path)}" alt="">` : ""}
+          <span>${escapeHtml(myPick.title)}</span>
+          <button class="movie-night-pick-clear" id="btn-movie-night-clear-pick" type="button" aria-label="Retirer mon choix">×</button>
+        </div>` : `
+        ${quickChoices.length ? `<div class="movie-night-pick-quick">${quickChoices.map(movie => `
+          <button class="movie-night-pick-choice" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(movie)))}' type="button" title="${escapeAttr(movie.title)}">
+            ${movie.poster_path ? `<img src="${escapeAttr(TMDB_IMG + movie.poster_path)}" alt="${escapeAttr(movie.title)}">` : `<span>${escapeHtml(movie.title)}</span>`}
+          </button>`).join("")}</div>` : ""}
+        <div class="movie-night-pick-search">
+          <input type="text" id="movie-night-pick-input" placeholder="Ou cherche un autre film…" autocomplete="off">
+          <div class="movie-night-pick-results" id="movie-night-pick-results"></div>
+        </div>`}
+    </div>
+
     ${isHost ? `
       ${remainingFriends.length ? `<button class="btn-secondary" id="btn-movie-night-add-friends">+ Ajouter des amis</button>` : ""}
-      <button class="btn-primary" id="btn-movie-night-start">Lancer la soirée</button>
-    ` : `<p class="movie-night-hint">L'hôte lancera la soirée dès que vous êtes prêts.</p>`}
+      <button class="btn-primary" id="btn-movie-night-start" ${accepted.length < 2 ? "disabled" : ""}>${accepted.length < 2 ? "En attente d'un premier invité…" : "Lancer le vote"}</button>
+      <button class="movie-night-danger-link" id="btn-movie-night-cancel" type="button">Annuler la soirée</button>
+    ` : `
+      <p class="movie-night-hint">L'hôte lancera le vote dès que tout le monde est prêt.</p>
+      <button class="movie-night-danger-link" id="btn-movie-night-leave" type="button">Quitter la soirée</button>
+    `}
   `;
 }
 
-function renderMovieNightVoting(night) {
-  const myVote = night.votes?.[currentUser] || null;
+function movieNightVoterAvatarsHtml(night) {
+  const votes = night.votes || {};
+  return `<div class="movie-night-voters">${(night.participantIds || []).map(uid => `
+    <span class="movie-night-voter ${votes[uid] != null ? "voted" : ""}" title="${escapeAttr((profileById(uid) || fallbackProfile(uid)).name)}">
+      ${profileAvatarHtml(uid, 30)}${votes[uid] != null ? `<i>${tabIconHtml("check")}</i>` : ""}
+    </span>`).join("")}
+  </div>`;
+}
+
+function movieNightSourceLabel(night, candidateId) {
+  const source = (night.candidateSources || {})[String(Number(candidateId))];
+  if (!source) return "";
+  const nameOf = uid => (profileById(uid) || fallbackProfile(uid)).name;
+  if (source.pickers?.length) {
+    const names = source.pickers.map(nameOf);
+    return `Choix de ${names.length > 1 ? names.slice(0, 2).join(" et ") : names[0]}`;
+  }
+  const count = source.listers?.length || 0;
+  if (count > 1) return `Dans ${count} listes À voir`;
+  if (count === 1) return `Liste de ${nameOf(source.listers[0])}`;
+  return "";
+}
+
+function renderMovieNightVoting(night, isHost) {
+  const myVote = night.votes?.[currentUser] ?? null;
   const totalParticipants = (night.participantIds || []).length;
   const totalVotes = Object.keys(night.votes || {}).length;
-  const cards = (night.candidates || []).map(candidate => `
-    <button class="movie-night-candidate ${myVote === candidate.id ? "selected" : ""}" data-movie-id="${candidate.id}" type="button">
-      ${movieNightCandidateArt(candidate)}
+  const missing = Math.max(0, totalParticipants - totalVotes);
+  const cards = (night.candidates || []).map(candidate => {
+    const sourceLabel = movieNightSourceLabel(night, candidate.id);
+    return `
+    <button class="movie-night-candidate ${Number(myVote) === Number(candidate.id) ? "selected" : ""}" data-movie-id="${candidate.id}" type="button">
+      <span class="movie-night-candidate-art">${movieNightCandidateArt(candidate)}<i class="movie-night-candidate-check">${tabIconHtml("check")}</i></span>
       <strong>${escapeHtml(candidate.title)}</strong>
       <small>${candidate.release_date ? String(candidate.release_date).slice(0, 4) : "????"} · ⭐ ${candidate.vote_average ? Number(candidate.vote_average).toFixed(1) : "—"}</small>
-    </button>
-  `).join("");
+      ${sourceLabel ? `<em class="movie-night-candidate-source">${escapeHtml(sourceLabel)}</em>` : ""}
+    </button>`;
+  }).join("");
   return `
-    <div class="movie-night-kicker">À VOTER</div>
+    ${movieNightStepperHtml("voting")}
+    <div class="movie-night-kicker">LE VOTE EST OUVERT</div>
     <h2>Quel film ce soir ?</h2>
     <div class="movie-night-candidates">${cards}</div>
-    <p class="movie-night-hint">${totalVotes} / ${totalParticipants} ont voté</p>
-    <button class="btn-primary" id="btn-movie-night-reveal">Voir le résultat</button>
+    ${movieNightVoterAvatarsHtml(night)}
+    <p class="movie-night-hint">${myVote == null ? "Touche un film pour voter — tu peux changer d'avis." : missing ? `Encore ${missing} vote${missing > 1 ? "s" : ""}… Le résultat s'affichera tout seul.` : "Tout le monde a voté !"}</p>
+    ${isHost && missing > 0 ? `<button class="btn-secondary" id="btn-movie-night-reveal">Révéler sans attendre (${totalVotes}/${totalParticipants})</button>` : ""}
   `;
 }
 
-function renderMovieNightReveal(night) {
-  const winner = (night.candidates || []).find(c => c.id === night.winnerMovieId) || night.candidates?.[0];
+function renderMovieNightReveal(night, isHost) {
+  const winner = (night.candidates || []).find(c => Number(c.id) === Number(night.winnerMovieId)) || night.candidates?.[0];
   if (!winner) return `<div class="movie-night-kicker">RÉSULTAT</div><h2>Aucun film retenu</h2>`;
+  const votes = night.votes || {};
+  const winnerVotes = Object.values(votes).filter(id => Number(id) === Number(winner.id)).length;
+  const totalVotes = Object.keys(votes).length;
+  const inMyWatched = myWatched().some(movie => Number(movie.id) === Number(winner.id));
+  const inMyWatchlist = myWatchlist().some(movie => Number(movie.id) === Number(winner.id));
+  const remaining = (night.candidates || []).length - 1;
   return `
+    ${movieNightStepperHtml("revealed")}
     <div class="movie-night-kicker">C'EST DÉCIDÉ</div>
-    ${winner.poster_path ? `<img class="movie-night-winner-poster" src="${escapeAttr(TMDB_IMG + winner.poster_path)}" alt="${escapeAttr(winner.title)}">` : ""}
-    <h2>${escapeHtml(winner.title)}</h2>
+    <div class="movie-night-winner-wrap">
+      ${winner.poster_path ? `<img class="movie-night-winner-poster" id="movie-night-winner-poster" src="${escapeAttr(TMDB_IMG + winner.poster_path)}" alt="${escapeAttr(winner.title)}">` : ""}
+      <h2>${escapeHtml(winner.title)}</h2>
+      <p class="movie-night-winner-meta">
+        ${totalVotes ? `${winnerVotes} voix sur ${totalVotes}` : "Choisi pour vous"}${night.tieBreak ? " · égalité départagée au tirage au sort" : ""}
+      </p>
+    </div>
     <div id="movie-night-winner-providers" class="movie-detail-loading"><span class="loading-spin"></span></div>
+    <div class="movie-night-after-actions">
+      ${inMyWatched ? "" : `<button class="btn-primary" id="btn-movie-night-mark-watched">On l'a vu → je note</button>`}
+      ${inMyWatched || inMyWatchlist ? "" : `<button class="btn-secondary" id="btn-movie-night-to-watchlist">Garder dans ma liste À voir</button>`}
+      ${isHost ? `
+        ${remaining >= 2 ? `<button class="btn-secondary" id="btn-movie-night-revote">Revoter sans ce film</button>` : ""}
+        <button class="btn-secondary" id="btn-movie-night-finish">Terminer la soirée</button>
+      ` : ""}
+    </div>
   `;
+}
+
+function attachMovieNightPickEvents(night) {
+  document.querySelectorAll(".movie-night-pick-choice").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const movie = JSON.parse(btn.dataset.movie);
+      setMovieNightPick(night, movie);
+    });
+  });
+  document.getElementById("btn-movie-night-clear-pick")?.addEventListener("click", () => setMovieNightPick(night, null));
+  const input = document.getElementById("movie-night-pick-input");
+  const results = document.getElementById("movie-night-pick-results");
+  if (!input || !results) return;
+  input.addEventListener("input", () => {
+    clearTimeout(movieNightPickSearchTimer);
+    const value = input.value.trim();
+    if (value.length < 2) { results.innerHTML = ""; return; }
+    movieNightPickSearchTimer = setTimeout(async () => {
+      try {
+        const found = (await searchMovies(value)).filter(movie => movie.poster_path).slice(0, 4);
+        if (!document.body.contains(results)) return;
+        results.innerHTML = found.map(movie => `
+          <button class="movie-night-pick-result" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(movie)))}' type="button">
+            <img src="${escapeAttr(TMDB_IMG + movie.poster_path)}" alt="">
+            <span>${escapeHtml(movie.title)}<small>${escapeHtml(String(movie.release_date || "").slice(0, 4))}</small></span>
+          </button>`).join("");
+        results.querySelectorAll(".movie-night-pick-result").forEach(btn => {
+          btn.addEventListener("click", () => setMovieNightPick(night, JSON.parse(btn.dataset.movie)));
+        });
+      } catch (e) {
+        // Recherche silencieusement indisponible : le choix rapide reste utilisable.
+      }
+    }, 300);
+  });
 }
 
 function renderMovieNightSheet() {
   const zone = document.getElementById("movie-night-content");
   const night = activeMovieNight;
   if (!zone || !night) return;
+  if (night.status === "done") { closeMovieNightSheet(); return; }
   const isHost = night.hostUid === currentUser;
+  const pickInput = document.getElementById("movie-night-pick-input");
+  const preservedQuery = pickInput && document.activeElement === pickInput ? pickInput.value : null;
+
   if (night.status === "collecting") zone.innerHTML = renderMovieNightCollecting(night, isHost);
-  else if (night.status === "voting") zone.innerHTML = renderMovieNightVoting(night);
-  else zone.innerHTML = renderMovieNightReveal(night);
+  else if (night.status === "voting") zone.innerHTML = renderMovieNightVoting(night, isHost);
+  else zone.innerHTML = renderMovieNightReveal(night, isHost);
+
+  if (night.status === "collecting") {
+    attachMovieNightPickEvents(night);
+    if (preservedQuery !== null) {
+      const restored = document.getElementById("movie-night-pick-input");
+      if (restored) {
+        restored.value = preservedQuery;
+        restored.focus();
+        restored.dispatchEvent(new Event("input"));
+      }
+    }
+  }
 
   document.getElementById("btn-movie-night-add-friends")?.addEventListener("click", () => {
     movieNightInviteSelection = new Set();
@@ -4370,13 +4699,53 @@ function renderMovieNightSheet() {
     document.getElementById("movie-night-invite-overlay")?.classList.add("show");
   });
   document.getElementById("btn-movie-night-start")?.addEventListener("click", () => startMovieNightVoting(night));
+  document.getElementById("btn-movie-night-cancel")?.addEventListener("click", () => {
+    openConfirmSheet({
+      title: "Annuler la soirée ?",
+      message: "Les invitations envoyées seront retirées.",
+      confirmLabel: "Annuler la soirée",
+      danger: true,
+      onConfirm: () => cancelMovieNight(night)
+    });
+  });
+  document.getElementById("btn-movie-night-leave")?.addEventListener("click", () => leaveMovieNight(night));
   zone.querySelectorAll(".movie-night-candidate").forEach(btn => {
     btn.addEventListener("click", () => castMovieNightVote(night, btn.dataset.movieId));
   });
-  document.getElementById("btn-movie-night-reveal")?.addEventListener("click", () => revealMovieNightWinner(night));
+  document.getElementById("btn-movie-night-reveal")?.addEventListener("click", () => {
+    const missing = (night.participantIds || []).length - Object.keys(night.votes || {}).length;
+    if (missing > 0) {
+      openConfirmSheet({
+        title: "Révéler maintenant ?",
+        message: `${missing} participant${missing > 1 ? "s n'ont" : " n'a"} pas encore voté.`,
+        confirmLabel: "Révéler le résultat",
+        onConfirm: () => revealMovieNightWinner(night)
+      });
+    } else {
+      revealMovieNightWinner(night);
+    }
+  });
 
   if (night.status === "revealed") {
-    const winner = (night.candidates || []).find(c => c.id === night.winnerMovieId) || night.candidates?.[0];
+    const winner = (night.candidates || []).find(c => Number(c.id) === Number(night.winnerMovieId)) || night.candidates?.[0];
+    if (!movieNightConfettiFired.has(night.id)) {
+      movieNightConfettiFired.add(night.id);
+      const poster = document.getElementById("movie-night-winner-poster");
+      if (poster) setTimeout(() => fireConfetti(poster), 250);
+    }
+    document.getElementById("btn-movie-night-mark-watched")?.addEventListener("click", () => {
+      if (!winner) return;
+      closeMovieNightSheet();
+      openRatingSheet(winner, "watchlist");
+    });
+    document.getElementById("btn-movie-night-to-watchlist")?.addEventListener("click", event => {
+      if (!winner) return;
+      addToWatchlist(winner);
+      event.currentTarget.remove();
+      showToast("Ajouté à ta liste À voir");
+    });
+    document.getElementById("btn-movie-night-revote")?.addEventListener("click", () => restartMovieNightVote(night));
+    document.getElementById("btn-movie-night-finish")?.addEventListener("click", () => finishMovieNight(night));
     const providersZone = document.getElementById("movie-night-winner-providers");
     if (winner && providersZone) {
       getMovieDetails(winner.id).then(details => {
@@ -4573,7 +4942,11 @@ function attachAppEvents() {
   document.getElementById("btn-open-my-profile")?.addEventListener("click", () => openProfileSheet(currentUser));
   document.getElementById("btn-open-portrait-story")?.addEventListener("click", () => openPortraitStory(currentUser));
   document.getElementById("btn-open-top-duel")?.addEventListener("click", openTopDuelSheet);
-  document.getElementById("btn-open-movie-night")?.addEventListener("click", openMovieNightInvitePicker);
+  document.getElementById("btn-open-movie-night")?.addEventListener("click", event => {
+    const ongoingId = event.currentTarget.dataset.ongoingId;
+    if (ongoingId) openMovieNightSheet(ongoingId);
+    else openMovieNightInvitePicker();
+  });
 
   document.querySelectorAll(".app-tab-item").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -8527,6 +8900,16 @@ body.no-page-scroll #root {
 .movie-night-cta-copy strong { font-size: 15px; font-weight: 800; }
 .movie-night-cta-copy small { font-size: 11px; font-weight: 650; opacity: 0.85; }
 .movie-night-cta-arrow { font-size: 20px; font-weight: 600; opacity: .7; }
+.movie-night-cta.is-ongoing { background: linear-gradient(135deg, var(--lav), var(--sky)); color: #241a3f; }
+.movie-night-cta-live {
+  width: 9px; height: 9px; flex-shrink: 0; border-radius: 50%; background: #1f8a5f;
+  box-shadow: 0 0 0 0 rgba(31,138,95,.5); animation: night-live-pulse 1.6s ease infinite;
+}
+@keyframes night-live-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(31,138,95,.45); }
+  70% { box-shadow: 0 0 0 8px rgba(31,138,95,0); }
+  100% { box-shadow: 0 0 0 0 rgba(31,138,95,0); }
+}
 
 .movie-night-invite-intro { padding: 0 4px; color: var(--ink-soft); font-size: 12px; font-weight: 700; }
 .movie-night-invite-list { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; max-height: 45vh; overflow-y: auto; }
@@ -8556,25 +8939,126 @@ body.no-page-scroll #root {
 .movie-night-guest-row span { flex: 1; font-size: 13px; font-weight: 700; }
 .movie-night-guest-row small { font-size: 10px; font-weight: 800; color: var(--ink-faint); }
 .movie-night-guest-row small.is-accepted { color: #1f8a5f; }
+.movie-night-host-tag {
+  margin-left: 6px; padding: 2px 6px; border-radius: 7px; font: 700 8px 'DM Mono', monospace;
+  font-style: normal; text-transform: uppercase; color: var(--lav-deep); background: rgba(159,134,222,.18);
+}
+.movie-night-guest-pick {
+  display: inline-flex; align-items: center; gap: 3px; font-size: 9px; font-weight: 800;
+  font-style: normal; color: #1f8a5f;
+}
+.movie-night-guest-pick .tab-svg { width: 12px; height: 12px; }
 .movie-night-hint { margin: 6px 0 14px; color: var(--ink-soft); font-size: 11px; font-weight: 700; text-align: center; }
 #movie-night-content .btn-secondary { margin-bottom: 8px; }
+.movie-night-danger-link {
+  display: block; width: 100%; margin: 2px 0 4px; padding: 10px; border: none; background: none;
+  color: #b4504f; font-family: 'Plus Jakarta Sans', sans-serif; font-size: 11.5px; font-weight: 800;
+}
 
-.movie-night-candidates { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 9px; margin-bottom: 6px; }
-.movie-night-candidate { border: none; background: transparent; padding: 0; text-align: left; font-family: inherit; }
+.movie-night-stepper { display: flex; align-items: center; justify-content: center; gap: 7px; margin: 2px 0 14px; }
+.movie-night-step {
+  display: inline-flex; align-items: center; gap: 5px; color: var(--ink-faint);
+  font: 700 9px 'DM Mono', monospace; letter-spacing: .4px; text-transform: uppercase;
+}
+.movie-night-step i {
+  width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%;
+  background: var(--bg); font-style: normal; font-size: 9px;
+  box-shadow: inset 2px 2px 4px var(--shadow-d), inset -2px -2px 4px var(--shadow-l);
+}
+.movie-night-step i .tab-svg { width: 10px; height: 10px; }
+.movie-night-step.active { color: var(--lav-deep); }
+.movie-night-step.active i { background: var(--lav); color: #fff; box-shadow: none; }
+.movie-night-step.done { color: #1f8a5f; }
+.movie-night-step.done i { background: rgba(31,138,95,.16); color: #1f8a5f; box-shadow: none; }
+.movie-night-step-line { flex: 0 0 14px; height: 2px; border-radius: 2px; background: var(--shadow-d); opacity: .5; }
+
+.movie-night-pick-zone {
+  margin: 2px 0 16px; padding: 13px; border-radius: 18px; background: var(--bg);
+  box-shadow: inset 3px 3px 8px var(--shadow-d), inset -3px -3px 8px var(--shadow-l);
+}
+.movie-night-pick-heading strong { display: block; font-size: 13px; font-weight: 800; }
+.movie-night-pick-heading span { display: block; margin-top: 2px; color: var(--ink-soft); font-size: 10px; font-weight: 700; }
+.movie-night-pick-quick { display: grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap: 7px; margin-top: 11px; }
+.movie-night-pick-choice { border: none; background: none; padding: 0; border-radius: 10px; overflow: hidden; }
+.movie-night-pick-choice img, .movie-night-pick-choice span {
+  display: block; width: 100%; aspect-ratio: 2/3; object-fit: cover; border-radius: 10px;
+}
+.movie-night-pick-choice span { display: grid; place-items: center; background: var(--card); font-size: 8px; font-weight: 700; color: var(--ink-soft); padding: 3px; text-align: center; }
+.movie-night-pick-choice:active { transform: scale(.94); }
+.movie-night-my-pick {
+  display: flex; align-items: center; gap: 10px; margin-top: 11px; padding: 8px 10px;
+  border-radius: 13px; background: var(--card); box-shadow: 3px 3px 8px var(--shadow-d), -3px -3px 8px var(--shadow-l);
+}
+.movie-night-my-pick img { width: 34px; aspect-ratio: 2/3; border-radius: 7px; object-fit: cover; }
+.movie-night-my-pick span { flex: 1; font-size: 12px; font-weight: 800; }
+.movie-night-pick-clear {
+  width: 28px; height: 28px; border: none; border-radius: 50%; background: var(--bg);
+  color: var(--ink-soft); font-size: 15px; flex-shrink: 0;
+}
+.movie-night-pick-search { margin-top: 11px; }
+.movie-night-pick-search input {
+  width: 100%; min-height: 42px; padding: 0 13px; border: none; border-radius: 13px;
+  background: var(--card); color: var(--ink); font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 12.5px; font-weight: 700;
+  box-shadow: 3px 3px 8px var(--shadow-d), -3px -3px 8px var(--shadow-l);
+}
+.movie-night-pick-search input::placeholder { color: var(--ink-faint); }
+.movie-night-pick-results { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.movie-night-pick-result {
+  display: flex; align-items: center; gap: 9px; padding: 6px 8px; border: none; border-radius: 12px;
+  background: var(--card); color: var(--ink); font-family: 'Plus Jakarta Sans', sans-serif; text-align: left;
+}
+.movie-night-pick-result img { width: 30px; aspect-ratio: 2/3; border-radius: 6px; object-fit: cover; }
+.movie-night-pick-result span { flex: 1; font-size: 11.5px; font-weight: 800; }
+.movie-night-pick-result small { display: block; margin-top: 1px; color: var(--ink-soft); font-size: 9px; font-weight: 700; }
+
+.movie-night-candidates { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 11px; margin-bottom: 12px; }
+.movie-night-candidate { border: none; background: transparent; padding: 0; text-align: left; font-family: inherit; position: relative; }
+.movie-night-candidate-art { display: block; position: relative; }
 .movie-night-candidate img, .movie-night-candidate-empty {
-  width: 100%; aspect-ratio: 2/3; border-radius: 14px; object-fit: cover; display: block;
+  width: 100%; aspect-ratio: 2/3; border-radius: 15px; object-fit: cover; display: block;
   box-shadow: 4px 4px 10px var(--shadow-d), -4px -4px 10px var(--shadow-l);
-  transition: box-shadow .14s;
+  transition: box-shadow .14s, transform .14s;
 }
+.movie-night-candidate:active img { transform: scale(.97); }
 .movie-night-candidate-empty { display: grid; place-items: center; background: var(--bg); font-size: 10px; font-weight: 700; color: var(--ink-soft); padding: 6px; text-align: center; }
-.movie-night-candidate.selected img, .movie-night-candidate.selected .movie-night-candidate-empty {
-  box-shadow: 0 0 0 3px var(--lav);
+.movie-night-candidate-check {
+  position: absolute; right: 7px; top: 7px; width: 26px; height: 26px; display: none;
+  place-items: center; border-radius: 50%; background: var(--lav); color: #fff;
+  box-shadow: 0 4px 10px rgba(0,0,0,.25);
 }
-.movie-night-candidate strong { display: block; margin-top: 7px; font-size: 11px; font-weight: 800; line-height: 1.2; }
-.movie-night-candidate small { display: block; margin-top: 2px; font-size: 9px; font-weight: 700; color: var(--ink-soft); }
+.movie-night-candidate-check .tab-svg { width: 14px; height: 14px; }
+.movie-night-candidate.selected img, .movie-night-candidate.selected .movie-night-candidate-empty {
+  box-shadow: 0 0 0 3px var(--lav), 4px 4px 12px var(--shadow-d);
+}
+.movie-night-candidate.selected .movie-night-candidate-check { display: grid; }
+.movie-night-candidate strong { display: block; margin-top: 8px; font-size: 12px; font-weight: 800; line-height: 1.2; }
+.movie-night-candidate small { display: block; margin-top: 2px; font-size: 9.5px; font-weight: 700; color: var(--ink-soft); }
+.movie-night-candidate-source {
+  display: inline-block; margin-top: 5px; padding: 3px 7px; border-radius: 8px;
+  background: rgba(159,134,222,.16); color: var(--lav-deep);
+  font-style: normal; font-size: 8.5px; font-weight: 800;
+}
 
-.movie-night-winner-poster { width: 160px; margin: 0 auto 14px; border-radius: 18px; display: block; box-shadow: 0 18px 40px rgba(0,0,0,.28); }
-.movie-night-sheet .movie-night-winner-poster + h2 { text-align: center; }
+.movie-night-voters { display: flex; justify-content: center; gap: 9px; margin: 4px 0 2px; }
+.movie-night-voter { position: relative; display: inline-flex; opacity: .38; filter: grayscale(.6); }
+.movie-night-voter.voted { opacity: 1; filter: none; }
+.movie-night-voter i {
+  position: absolute; right: -3px; bottom: -3px; width: 14px; height: 14px; display: grid;
+  place-items: center; border-radius: 50%; background: #1f8a5f; color: #fff;
+}
+.movie-night-voter i .tab-svg { width: 8px; height: 8px; }
+
+.movie-night-winner-wrap { text-align: center; }
+.movie-night-winner-poster {
+  width: 160px; margin: 6px auto 14px; border-radius: 18px; display: block;
+  box-shadow: 0 18px 40px rgba(0,0,0,.28);
+  animation: night-winner-pop .5s cubic-bezier(.34,1.56,.64,1) backwards;
+}
+@keyframes night-winner-pop { from { opacity: 0; transform: scale(.7) translateY(14px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+.movie-night-winner-meta { margin: -6px 0 14px; color: var(--ink-soft); font-size: 11px; font-weight: 700; }
+.movie-night-after-actions { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.movie-night-after-actions .btn-primary, .movie-night-after-actions .btn-secondary { margin: 0; }
 
 .movie-night-banner { align-items: center; }
 .movie-night-banner-icon {
