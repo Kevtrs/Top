@@ -2253,12 +2253,19 @@ function badgeHasDiscoverSource(challenge) {
 }
 async function fetchBadgeMoviesDiscoverPage(challenge, page) {
   if (challenge.genreIds?.length) {
-    return await discoverMoviesByGenres(challenge.genreIds, {
-      genreOperator: "or",
+    const data = await tmdbFetch("/discover/movie", {
+      include_adult: "false",
+      include_video: "false",
+      with_genres: challenge.genreIds.join("|"),
       sort_by: "vote_count.desc",
       "vote_count.gte": "20",
       page
     });
+    if (page === 1) {
+      console.log("[badge-debug]", challenge.id, "total_results:", data.total_results, "total_pages:", data.total_pages, "results.length:", (data.results || []).length);
+      showToast(`Debug ${challenge.id}: total_results=${data.total_results}, total_pages=${data.total_pages}`);
+    }
+    return data.results || [];
   }
   if (challenge.beforeYear) {
     const data = await tmdbFetch("/discover/movie", {
