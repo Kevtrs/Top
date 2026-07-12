@@ -2256,6 +2256,7 @@ async function fetchBadgeMoviesDiscoverPage(challenge, page) {
     return await discoverMoviesByGenres(challenge.genreIds, {
       genreOperator: "or",
       sort_by: "vote_count.desc",
+      "vote_count.gte": "20",
       page
     });
   }
@@ -2264,7 +2265,7 @@ async function fetchBadgeMoviesDiscoverPage(challenge, page) {
       include_adult: "false",
       include_video: "false",
       "primary_release_date.lte": `${challenge.beforeYear - 1}-12-31`,
-      "vote_count.gte": "180",
+      "vote_count.gte": "20",
       sort_by: "vote_count.desc",
       page
     });
@@ -2423,6 +2424,15 @@ async function loadMoreBadgeMovies(state, container) {
   if (!state.pool.length && (state.isSaga || state.discoverExhausted || !badgeHasDiscoverSource(state.challenge))) {
     state.exhausted = true;
   }
+
+  if (!state.exhausted && badgeMoviesSheetHasRoom(container)) {
+    loadMoreBadgeMovies(state, container);
+  }
+}
+function badgeMoviesSheetHasRoom(container) {
+  const sheet = container.closest(".context-sheet");
+  if (!sheet) return false;
+  return sheet.scrollHeight <= sheet.clientHeight + 4;
 }
 function ensureBadgeMoviesScrollListener() {
   if (badgeMoviesScrollBound) return;
