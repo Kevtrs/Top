@@ -622,6 +622,11 @@ let creatingProfile = false; // état "créer un nouveau profil" sur l'écran de
 let deferredInstallPrompt = null;
 let recommendationRequestSeq = 0;
 let badgeMoviesRequestSeq = 0;
+const BADGE_MOVIES_PAGE_SIZE = 20;
+let badgeMoviesState = null;
+const badgeMoviesCache = new Map();
+let badgeMoviesScrollBound = false;
+let badgeMoviesScrollTicking = false;
 let profilesSynced = false;
 let rankingsSynced = false;
 let profilesServerConfirmed = false;
@@ -2243,50 +2248,212 @@ function uniqueBadgeMovies(movies) {
   });
   return [...unique.values()];
 }
-async function badgeAssociatedMovies(challenge) {
-  if (challenge.movieIds?.length) {
-    return (await Promise.all(challenge.movieIds.map(async id => {
-      const stored = movieStoredForBadge(id);
-      if (stored?.poster_path && stored?.title) return stored;
-      return getSagaMovieResult(id).catch(() => stored);
-    }))).filter(Boolean);
+function badgeHasDiscoverSource(challenge) {
+  return !!(challenge.genreIds?.length || challenge.beforeYear);
+}
+async function fetchBadgeMoviesDiscoverPage(challenge, page) {
+  if (challenge.genreIds?.length) {
+    return await discoverMoviesByGenres(challenge.genreIds, {
+      genreOperator: "or",
+      sort_by: "vote_count.desc",
+      page
+    });
   }
-
+  if (challenge.beforeYear) {
+    const data = await tmdbFetch("/discover/movie", {
+      include_adult: "false",
+      include_video: "false",
+      "primary_release_date.lte": `${challenge.beforeYear - 1}-12-31`,
+      "vote_count.gte": "180",
+      sort_by: "vote_count.desc",
+      page
+    });
+    return data.results || [];
+  }
+  return [];
+}
+function buildBadgeMoviesPoolSync(challenge) {
   const counted = challengeSeenMovies().filter(movie => baseChallengeMatchesMovie(movie, challenge));
   const attached = challenge.associatedMovies || [];
-  const jobs = challengeRecommendationJobs(challenge, { includeCompleted: true });
-  const batches = jobs.length ? await Promise.all(jobs) : [];
-  const discovered = batches.flat().map(item => item.movie);
-  return uniqueBadgeMovies([...counted, ...attached, ...discovered])
-    .filter(movie => movie.poster_path)
-    .slice(0, 36);
+  const suggested = challenge.suggestedMovies || [];
+  return uniqueBadgeMovies([...counted, ...attached, ...suggested]).filter(movie => movie.poster_path);
 }
-function renderBadgeMovieCards(container, movies) {
-  if (!movies.length) {
+async function buildSagaMoviesPool(challenge) {
+  return (await Promise.all(challenge.movieIds.map(async id => {
+    const stored = movieStoredForBadge(id);
+    if (stored?.poster_path && stored?.title) return stored;
+    return getSagaMovieResult(id).catch(() => stored);
+  }))).filter(Boolean);
+}
+function createBadgeMoviesState(challenge) {
+  return {
+    challenge,
+    isSaga: !!challenge.movieIds?.length,
+    items: [],
+    loadedIds: new Set(),
+    pool: [],
+    poolReady: false,
+    discoverPage: 1,
+    discoverExhausted: false,
+    exhausted: false,
+    loading: false,
+    scrollTop: 0
+  };
+}
+function badgeMovieCardHtml(movie) {
+  const state = badgeMovieState(movie.id);
+  const year = String(movie.release_date || "").slice(0, 4);
+  return `
+    <button class="badge-movie-card" type="button" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(movie)))}'>
+      <span class="badge-movie-poster-wrap">
+        <img src="${escapeAttr(TMDB_IMG + movie.poster_path)}" alt="${escapeAttr(movie.title)}" loading="lazy">
+        <i class="badge-movie-state ${state.className}">${escapeHtml(state.label)}</i>
+      </span>
+      <strong>${escapeHtml(movie.title)}</strong>
+      <small>${escapeHtml(year || "Film")}</small>
+    </button>`;
+}
+function bindBadgeMovieCard(button) {
+  button.addEventListener("click", () => {
+    const movie = JSON.parse(button.dataset.movie);
+    pendingActionBadgeId = document.getElementById("badge-movies-overlay")?.dataset.challengeId || null;
+    closeBadgeMoviesSheet();
+    openMovieActionSheet(movie, "badge");
+  });
+}
+function appendBadgeMovieCards(container, movies) {
+  const frag = document.createDocumentFragment();
+  movies.forEach(movie => {
+    const wrap = document.createElement("div");
+    wrap.innerHTML = badgeMovieCardHtml(movie);
+    const button = wrap.firstElementChild;
+    bindBadgeMovieCard(button);
+    frag.appendChild(button);
+  });
+  container.appendChild(frag);
+}
+function renderBadgeMoviesFromState(container, state) {
+  if (!state.items.length) {
     container.innerHTML = `<div class="badge-movies-empty">Aucun film disponible pour le moment.</div>`;
     return;
   }
-  container.innerHTML = movies.map(movie => {
-    const state = badgeMovieState(movie.id);
-    const year = String(movie.release_date || "").slice(0, 4);
-    return `
-      <button class="badge-movie-card" type="button" data-movie='${escapeAttr(JSON.stringify(simplifyMovie(movie)))}'>
-        <span class="badge-movie-poster-wrap">
-          <img src="${escapeAttr(TMDB_IMG + movie.poster_path)}" alt="${escapeAttr(movie.title)}" loading="lazy">
-          <i class="badge-movie-state ${state.className}">${escapeHtml(state.label)}</i>
-        </span>
-        <strong>${escapeHtml(movie.title)}</strong>
-        <small>${escapeHtml(year || "Film")}</small>
-      </button>`;
-  }).join("");
-  container.querySelectorAll(".badge-movie-card").forEach(button => {
-    button.addEventListener("click", () => {
-      const movie = JSON.parse(button.dataset.movie);
-      pendingActionBadgeId = document.getElementById("badge-movies-overlay")?.dataset.challengeId || null;
-      closeBadgeMoviesSheet();
-      openMovieActionSheet(movie, "badge");
-    });
+  container.innerHTML = "";
+  appendBadgeMovieCards(container, state.items);
+}
+function showBadgeMoviesLoadMoreSkeleton(container) {
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < 8; i++) {
+    const card = document.createElement("div");
+    card.className = "badge-movie-card-skeleton";
+    card.dataset.skeleton = "loadmore";
+    card.innerHTML = `<div class="skeleton-poster"></div><div class="skeleton-line"></div><div class="skeleton-line short"></div>`;
+    frag.appendChild(card);
+  }
+  container.appendChild(frag);
+}
+function clearBadgeMoviesLoadMoreSkeleton(container) {
+  container.querySelectorAll('[data-skeleton="loadmore"]').forEach(el => el.remove());
+}
+async function loadMoreBadgeMovies(state, container) {
+  if (state.loading || state.exhausted) return;
+  state.loading = true;
+  const isFirstLoad = state.items.length === 0;
+  if (isFirstLoad) container.innerHTML = `<div class="badge-movies-loading">${Array(6).fill('<span></span>').join("")}</div>`;
+  else showBadgeMoviesLoadMoreSkeleton(container);
+
+  let batch = [];
+  try {
+    if (!state.poolReady) {
+      state.pool = state.isSaga ? await buildSagaMoviesPool(state.challenge) : buildBadgeMoviesPoolSync(state.challenge);
+      state.poolReady = true;
+    }
+    if (badgeMoviesState !== state) return;
+
+    while (batch.length < BADGE_MOVIES_PAGE_SIZE && state.pool.length) {
+      const movie = state.pool.shift();
+      const id = Number(movie.id);
+      if (!id || state.loadedIds.has(id)) continue;
+      state.loadedIds.add(id);
+      batch.push(movie);
+    }
+
+    if (!state.isSaga && batch.length < BADGE_MOVIES_PAGE_SIZE && !state.discoverExhausted && badgeHasDiscoverSource(state.challenge)) {
+      let attempts = 0;
+      while (batch.length < BADGE_MOVIES_PAGE_SIZE && attempts < 4 && !state.discoverExhausted) {
+        attempts += 1;
+        const results = await fetchBadgeMoviesDiscoverPage(state.challenge, state.discoverPage);
+        if (badgeMoviesState !== state) return;
+        state.discoverPage += 1;
+        if (!results.length || state.discoverPage > 500) state.discoverExhausted = true;
+        results.forEach(movie => {
+          const id = Number(movie.id);
+          if (!id || !movie.poster_path || state.loadedIds.has(id)) return;
+          if (batch.length < BADGE_MOVIES_PAGE_SIZE) {
+            state.loadedIds.add(id);
+            batch.push(movie);
+          } else {
+            state.pool.push(movie);
+          }
+        });
+      }
+    }
+  } catch (e) {
+    state.loading = false;
+    if (isFirstLoad && badgeMoviesCache.get(state.challenge.id) === state) badgeMoviesCache.delete(state.challenge.id);
+    if (badgeMoviesState !== state) return;
+    if (isFirstLoad) container.innerHTML = `<div class="badge-movies-empty">Impossible de charger les films pour le moment.</div>`;
+    else clearBadgeMoviesLoadMoreSkeleton(container);
+    return;
+  }
+
+  state.loading = false;
+  if (badgeMoviesState !== state) return;
+
+  if (isFirstLoad) container.innerHTML = "";
+  else clearBadgeMoviesLoadMoreSkeleton(container);
+
+  if (!batch.length) {
+    state.exhausted = true;
+    if (!state.items.length) container.innerHTML = `<div class="badge-movies-empty">Aucun film disponible pour le moment.</div>`;
+    return;
+  }
+
+  state.items.push(...batch);
+  appendBadgeMovieCards(container, batch);
+  if (!state.pool.length && (state.isSaga || state.discoverExhausted || !badgeHasDiscoverSource(state.challenge))) {
+    state.exhausted = true;
+  }
+}
+function ensureBadgeMoviesScrollListener() {
+  if (badgeMoviesScrollBound) return;
+  const sheet = document.querySelector("#badge-movies-overlay .context-sheet");
+  if (!sheet) return;
+  badgeMoviesScrollBound = true;
+  sheet.addEventListener("scroll", onBadgeMoviesScroll, { passive: true });
+}
+function onBadgeMoviesScroll(event) {
+  if (badgeMoviesScrollTicking) return;
+  badgeMoviesScrollTicking = true;
+  requestAnimationFrame(() => {
+    badgeMoviesScrollTicking = false;
+    const sheet = event.currentTarget;
+    const state = badgeMoviesState;
+    if (!state) return;
+    state.scrollTop = sheet.scrollTop;
+    if (state.loading || state.exhausted) return;
+    const { scrollTop, scrollHeight, clientHeight } = sheet;
+    if (scrollHeight <= clientHeight) return;
+    const ratio = (scrollTop + clientHeight) / scrollHeight;
+    if (ratio >= 0.72) {
+      const list = document.getElementById("badge-movies-list");
+      if (list) loadMoreBadgeMovies(state, list);
+    }
   });
+}
+function restoreBadgeMoviesScroll(overlay, state) {
+  const sheet = overlay.querySelector(".context-sheet");
+  if (!sheet) return;
+  requestAnimationFrame(() => { sheet.scrollTop = state.scrollTop || 0; });
 }
 function maybeRestoreBadgeMoviesSheet() {
   if (!pendingActionBadgeId) return;
@@ -2313,6 +2480,7 @@ async function openBadgeMoviesSheet(challengeId) {
   overlay.dataset.challengeId = challenge.id;
   overlay.classList.add("show");
   scheduleScrollLockUpdate();
+  ensureBadgeMoviesScrollListener();
 
   const active = activeCinemaChallenge();
   const percent = Math.round(challengeProgress(challenge) * 100);
@@ -2327,7 +2495,6 @@ async function openBadgeMoviesSheet(challengeId) {
     ${challenge.completed
       ? `<button class="btn-secondary badge-objective-btn" id="btn-toggle-showcase-badge" type="button">${isBadgeShowcased(challenge.id) ? "★ Dans ta vitrine" : "☆ Ajouter à ta vitrine"}</button>`
       : `<button class="btn-secondary badge-objective-btn" id="btn-set-badge-objective" type="button">${active?.id === challenge.id ? "Objectif actif" : "Choisir comme objectif"}</button>`}`;
-  list.innerHTML = `<div class="badge-movies-loading">${Array(6).fill('<span></span>').join("")}</div>`;
 
   document.getElementById("btn-set-badge-objective")?.addEventListener("click", event => {
     setActiveCinemaChallenge(challenge.id);
@@ -2351,9 +2518,21 @@ async function openBadgeMoviesSheet(challengeId) {
       await ensureDirectorFilmography({ id: challenge.directorId, name: challenge.directorName });
       challenge = cinemaChallengeCatalog().find(item => item.id === challengeId) || challenge;
     }
-    const movies = await badgeAssociatedMovies(challenge);
     if (requestId !== badgeMoviesRequestSeq || !overlay.classList.contains("show") || overlay.dataset.challengeId !== challenge.id) return;
-    renderBadgeMovieCards(list, movies);
+
+    const cached = badgeMoviesCache.get(challenge.id);
+    if (cached) {
+      cached.challenge = challenge;
+      badgeMoviesState = cached;
+      renderBadgeMoviesFromState(list, cached);
+      restoreBadgeMoviesScroll(overlay, cached);
+      return;
+    }
+
+    const state = createBadgeMoviesState(challenge);
+    badgeMoviesState = state;
+    badgeMoviesCache.set(challenge.id, state);
+    await loadMoreBadgeMovies(state, list);
   } catch (e) {
     if (requestId !== badgeMoviesRequestSeq) return;
     list.innerHTML = `<div class="badge-movies-empty">Impossible de charger les films pour le moment.</div>`;
@@ -2361,6 +2540,7 @@ async function openBadgeMoviesSheet(challengeId) {
 }
 function closeBadgeMoviesSheet() {
   badgeMoviesRequestSeq += 1;
+  badgeMoviesState = null;
   document.getElementById("badge-movies-overlay")?.classList.remove("show");
   scheduleScrollLockUpdate();
 }
@@ -7354,6 +7534,7 @@ body.no-page-scroll #root {
   border: none; padding: 0 0 8px; min-width: 0; overflow: hidden; text-align: left;
   border-radius: 13px; background: var(--card); color: var(--ink); font-family: 'Plus Jakarta Sans', sans-serif;
   box-shadow: 3px 3px 8px var(--shadow-d), -3px -3px 8px var(--shadow-l);
+  animation: pop-in 0.28s cubic-bezier(.34,1.56,.64,1) backwards;
 }
 .badge-movie-card:active { transform: scale(.97); }
 .badge-movie-poster-wrap { display: block; position: relative; }
@@ -7381,6 +7562,17 @@ body.no-page-scroll #root {
   grid-column: 1 / -1; padding: 22px 12px; border-radius: 14px; color: var(--ink-soft);
   background: var(--card); font-size: 11px; font-weight: 700; text-align: center;
 }
+.badge-movie-card-skeleton {
+  border-radius: 13px; overflow: hidden; background: var(--card);
+  box-shadow: 3px 3px 8px var(--shadow-d), -3px -3px 8px var(--shadow-l);
+}
+.badge-movie-card-skeleton .skeleton-poster {
+  aspect-ratio: 2 / 3; background: #E8E4F5;
+  background-image: linear-gradient(90deg, transparent, rgba(255,255,255,.7), transparent);
+  background-size: 70px 100%; background-repeat: no-repeat; animation: shine 1.1s ease infinite;
+}
+.badge-movie-card-skeleton .skeleton-line { height: 8px; margin: 9px 7px 0; border-radius: 4px; background: #E8E4F5; }
+.badge-movie-card-skeleton .skeleton-line.short { width: 42%; margin-top: 5px; margin-bottom: 8px; }
 
 @media (min-width: 540px) {
   #badge-movies-list { grid-template-columns: repeat(4, minmax(0,1fr)); }
