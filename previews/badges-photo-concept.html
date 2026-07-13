@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Le Top - Concept badges photo</title>
+  <style>
+    :root {
+      --bg:#F6F4FC; --card:#fff; --ink:#2D2A3D; --soft:#9A93B8; --faint:#D8D3E7;
+      --lav:#C9B8FF; --lav-deep:#4A2F7A; --pink:#FF9EB5; --gold:#FFD070;
+      --shadow:6px 7px 18px rgba(114,99,159,.16), -5px -5px 16px rgba(255,255,255,.95);
+    }
+    * { box-sizing:border-box; }
+    body {
+      margin:0; min-height:100vh; display:grid; place-items:center; background:#E9E6F1;
+      font-family:"Plus Jakarta Sans",Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--ink);
+    }
+    .phone {
+      width:393px; height:852px; position:relative; overflow:hidden; background:var(--bg); border-radius:44px;
+      box-shadow:0 24px 70px rgba(44,38,64,.24);
+    }
+    .app { padding:22px 20px; filter:blur(3px); opacity:.42; }
+    .header { display:flex; align-items:center; justify-content:space-between; }
+    .brand { display:flex; align-items:center; gap:10px; font-size:26px; font-weight:900; }
+    .brand img { width:40px; height:40px; border-radius:13px; box-shadow:var(--shadow); }
+    .settings { width:40px; height:40px; border-radius:50%; background:#fff; box-shadow:var(--shadow); }
+    .search { height:52px; margin-top:34px; border-radius:21px; background:#EFEAF8; box-shadow:inset 4px 4px 10px #DCD5ED; }
+    .ghost-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:18px; }
+    .ghost-grid div { height:70px; border-radius:18px; background:#fff; box-shadow:var(--shadow); }
+    .shade { position:absolute; inset:0; background:rgba(45,42,61,.22); backdrop-filter:blur(2px); }
+    .sheet {
+      position:absolute; left:0; right:0; bottom:0; height:744px; border-radius:28px 28px 0 0; background:rgba(255,255,255,.97);
+      padding:15px 18px 24px; box-shadow:0 -12px 38px rgba(58,48,85,.14); overflow:hidden;
+    }
+    .handle { width:38px; height:5px; margin:0 auto 24px; border-radius:99px; background:#C5BCDD; }
+    h1 { margin:0; font-size:27px; letter-spacing:0; }
+    .intro { margin:8px 0 16px; color:var(--soft); font-size:13px; line-height:1.45; font-weight:700; }
+    .list { display:flex; flex-direction:column; gap:11px; }
+    .badge {
+      min-height:112px; display:grid; grid-template-columns:84px minmax(0,1fr); align-items:center; gap:13px;
+      padding:12px; border-radius:20px; background:var(--card); box-shadow:var(--shadow); position:relative; overflow:hidden;
+    }
+    .badge.active { box-shadow:inset 0 0 0 2px var(--lav),var(--shadow); }
+    .badge.unlocked { background:linear-gradient(120deg,#fff 60%,#FFF3D8); }
+    .visual { width:78px; height:78px; position:relative; display:grid; place-items:center; overflow:hidden; }
+    .visual img.photo { width:100%; height:100%; object-fit:cover; display:block; }
+    .visual img.icon { position:absolute; width:31px; height:31px; filter:brightness(0) invert(1) drop-shadow(0 2px 4px rgba(0,0,0,.45)); z-index:3; }
+    .visual::after { content:""; position:absolute; inset:0; z-index:2; }
+    .tarantino { border-radius:14px; border:5px solid #3A304F; box-shadow:0 7px 13px rgba(57,48,79,.22); }
+    .tarantino::before {
+      content:"QT"; position:absolute; right:4px; bottom:4px; z-index:4; width:23px; height:23px; display:grid; place-items:center;
+      border-radius:50%; background:var(--gold); color:#493813; font-size:10px; font-weight:1000; border:2px solid #fff;
+    }
+    .tarantino::after { background:linear-gradient(180deg,transparent 45%,rgba(40,31,56,.62)); }
+    .horror { clip-path:polygon(50% 0,92% 18%,92% 62%,78% 83%,50% 100%,22% 83%,8% 62%,8% 18%); background:#352B4B; }
+    .horror::after { background:linear-gradient(135deg,rgba(36,28,54,.15),rgba(36,28,54,.72)); }
+    .crime { border-radius:8px; border:6px solid #F3BD4E; background:#F3BD4E; }
+    .crime::after { background:rgba(115,60,8,.43); }
+    .scifi { border-radius:50%; border:4px solid #7476C4; box-shadow:0 0 0 3px #E4DFFF; }
+    .scifi::after { background:linear-gradient(160deg,rgba(72,63,131,.08),rgba(72,63,131,.62)); }
+    .classic { border-radius:50%; border:7px dotted #4CB6A6; background:#4CB6A6; }
+    .classic::after { background:rgba(27,79,71,.5); }
+    .animation { border-radius:9px; border:6px solid #F39ABB; box-shadow:inset 0 0 0 3px #FFD272; }
+    .animation::after { background:linear-gradient(180deg,rgba(244,133,176,.02),rgba(104,42,82,.44)); }
+    .copy { min-width:0; }
+    .copy strong { display:block; font-size:16px; line-height:1.12; }
+    .copy > span { display:block; margin-top:4px; color:var(--soft); font-size:11.5px; line-height:1.28; font-weight:700; }
+    .progress { height:7px; margin-top:10px; border-radius:99px; background:#ECE9F4; overflow:hidden; }
+    .progress i { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,var(--lav),var(--pink)); }
+    .count { margin-top:5px; color:var(--lav-deep); font-size:11px; font-weight:900; }
+    .source {
+      position:absolute; right:18px; bottom:9px; color:#B2ABC8; font-size:8px; font-weight:700;
+    }
+  </style>
+</head>
+<body>
+  <main class="phone">
+    <div class="app">
+      <div class="header"><div class="brand"><img src="../letop-icon-192.png" alt="">Le Top</div><div class="settings"></div></div>
+      <div class="search"></div><div class="ghost-grid"><div></div><div></div><div></div><div></div></div>
+    </div>
+    <div class="shade"></div>
+    <section class="sheet">
+      <div class="handle"></div>
+      <h1>D&eacute;fis cin&eacute;ma</h1>
+      <p class="intro">Même fonctionnement, mais chaque badge devient un petit objet de collection li&eacute; &agrave; une vraie image de cin&eacute;ma.</p>
+      <div class="list">
+        <article class="badge">
+          <div class="visual tarantino"><img class="photo" src="asset-concept/tarantino.jpg" alt=""></div>
+          <div class="copy"><strong>100% Tarantino</strong><span>Compl&egrave;te ses dix longs m&eacute;trages principaux.</span><div class="progress"><i style="width:60%"></i></div><div class="count">6 / 10</div></div>
+        </article>
+        <article class="badge active">
+          <div class="visual horror"><img class="photo" src="asset-concept/horror.jpg" alt=""><img class="icon" src="asset-concept/moon.svg" alt=""></div>
+          <div class="copy"><strong>Nuit blanche</strong><span>Explore les films qui font vraiment frissonner.</span><div class="progress"><i style="width:37.5%"></i></div><div class="count">3 / 8 &middot; objectif actif</div></div>
+        </article>
+        <article class="badge unlocked">
+          <div class="visual crime"><img class="photo" src="asset-concept/crime.jpg" alt=""><img class="icon" src="asset-concept/fingerprint.svg" alt=""></div>
+          <div class="copy"><strong>Crime parfait</strong><span>Enqu&ecirc;tes, braquages et thrillers sous tension.</span><div class="progress"><i style="width:100%"></i></div><div class="count">D&eacute;bloqu&eacute;</div></div>
+        </article>
+        <article class="badge unlocked">
+          <div class="visual scifi"><img class="photo" src="asset-concept/scifi.jpg" alt=""><img class="icon" src="asset-concept/planet.svg" alt=""></div>
+          <div class="copy"><strong>Au-del&agrave; des &eacute;toiles</strong><span>Voyage dans le temps, l'espace et les futurs possibles.</span><div class="progress"><i style="width:100%"></i></div><div class="count">D&eacute;bloqu&eacute;</div></div>
+        </article>
+        <article class="badge">
+          <div class="visual classic"><img class="photo" src="asset-concept/classic.jpg" alt=""><img class="icon" src="asset-concept/movie.svg" alt=""></div>
+          <div class="copy"><strong>Machine &agrave; remonter le temps</strong><span>D&eacute;couvre les films qui ont construit le cin&eacute;ma.</span><div class="progress"><i style="width:40%"></i></div><div class="count">2 / 5</div></div>
+        </article>
+        <article class="badge">
+          <div class="visual animation"><img class="photo" src="asset-concept/animation.jpg" alt=""><img class="icon" src="asset-concept/wand.svg" alt=""></div>
+          <div class="copy"><strong>Mondes anim&eacute;s</strong><span>Du dessin traditionnel aux univers modernes.</span><div class="progress"><i style="width:0%"></i></div><div class="count">0 / 6</div></div>
+        </article>
+      </div>
+      <div class="source">Photos TMDB &middot; SVG Tabler Icons</div>
+    </section>
+  </main>
+</body>
+</html>
